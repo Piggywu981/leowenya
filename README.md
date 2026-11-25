@@ -35,6 +35,18 @@ runs on two tracks at once — getting the image right, and getting frames.
 
 ## Recent work
 
+### Series S profile: the upscaler and interface plane (ported from ccs03)
+
+A large port of ccs03's Series S work, so `--console series-s` can in
+principle render at 1280x720 internally (about 30% cheaper per frame than
+Series X) and fill the display with the title's own upscaler:
+
+- **Title-code patches** (`victory-game`, `victory-loader`, `run.rs`; ccs03 `82270e9`): a known build's code can be patched before mapping, with every expected byte run checked first and a patched copy given its own cache name. One build is registered — `Xbox Series master` (the hash our exe has) — with two patches that make the upscaler choice return 6 (the title's own upscaler) instead of FSR 4, whose output never reached the screen. `VICTORY_TITLE_PATCHES=0` disables them; `VICTORY_TITLE_PATCH=<rva>:<old>:<new>` adds more. Verified: both patches apply on our exe and the build is now identified.
+- **`over.rs`** (new, ccs03 `de1634d`/`fa7e312`/`184ce09`/`c831d8d`): a present's second plane — the title's interface at 3840x2160 in Series S mode — is drawn over the game image as one alpha-blended triangle, so menus and loading screens are not black. `host::present` takes the second plane and `queue::present` finds it (0x48-byte plane descriptions). `over.rs` also holds the FidelityFX upscale stretch.
+- **`ffx.rs`** (new HLE module, ccs03 `f41553f`): the title's `ffxDispatch` import is bound to ours, which turns an upscale dispatch into a plain stretch of the colour input via `list::upscale_stretch`; other dispatches pass to the title's own DLL. `run.rs` wires the binding.
+
+All new unit tests pass: 5 in `over` (stretch stays inside its target, format mapping, overlay pixels) and 2 in `ffx` (description layout, unanswered dispatch errors). **Not yet a working picture:** on our machine a `--console series-s` run still shows black frames and never reaches the world in a short run; the upscale dispatch was not observed to fire. The port compiles, is test-covered and does not affect the default `series-x` path; getting a lit Series S world needs more debugging.
+
 ### Guarded views: walk only the dirty gaps (ported from ccs03 `538749f`)
 
 `victory-gpu/src/watch.rs` now keeps the set of clean 64 KiB guard blocks as
@@ -175,6 +187,13 @@ powershell -ExecutionPolicy Bypass -File run.ps1
 powershell -ExecutionPolicy Bypass -File run.ps1 -Guide -Profile diag  # scripted first-run wizard
 powershell -ExecutionPolicy Bypass -File run.ps1 -Window             # A/B: window clamps
 ```
+
+The default is `--console series-x`. `--console series-s` selects the smaller
+internal render profile; its upscaler/interface-plane support is ported but
+not yet producing a lit world here, so treat it as experimental. The known
+build's upscaler patches apply automatically (`VICTORY_TITLE_PATCHES=0` turns
+them off), and `VICTORY_TITLE_PATCH=<rva>:<old hex>:<new hex>,...` adds custom
+ones for other builds.
 
 Requirements: Windows 10/11 x64, an AVX2 CPU, a D3D12 GPU with SM 6.6 and
 mesh shaders (NVIDIA RTX 20 series or newer), the Rust version pinned in
