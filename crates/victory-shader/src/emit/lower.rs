@@ -177,6 +177,14 @@ fn half_shift(width: u32) -> u32 {
     if width == 16 { 0 } else { 15 - width }
 }
 
+/// Whether a quad-local read reaches helper lanes: only in a pixel program,
+/// and only for an actual quad read. In a pixel program every quad a triangle
+/// edge crosses has helpers; wave reads return 0 from them on AMD, so a
+/// hand-made derivative read the wrong (smallest) mip along triangle edges.
+fn helpers_read_for(pixel: bool, quad: bool) -> bool {
+    quad && pixel
+}
+
 struct Lower<'a> {
     s: Shader,
     x: &'a Parts<'a>,
@@ -4293,6 +4301,17 @@ impl<'a> Lower<'a> {
         r
     }
 
+    /// Whether a quad-local read must reach helper lanes: in a pixel program
+    /// every quad a triangle edge crosses has some (the console's whole-quad
+    /// mode runs them; discarded pixels stay helpers too), and only quad
+    /// reads see them on the host (wave reads give 0 from them on AMD: wrong
+    /// derivatives of computed values along every triangle edge, seen as
+    /// lines on car paint, glass and skin). Upstream VIctory 4015a18;
+    /// Belobug 03629f3.
+    fn helpers_read(&self, quad: bool) -> bool {
+        helpers_read_for(self.s.pixel, quad)
+    }
+
     /// `x` in the first lane of this host wave where `guard` holds, and whether it has such a
     /// lane: the console reads the first lane of EXEC, and a lane that got here with EXEC clear
     /// (a guard, not a branch) is not one. With none, `x` of the wave's first lane here.
@@ -4321,6 +4340,24 @@ impl<'a> Lower<'a> {
         let lane = self.s.m.select(c, any, lane, me);
         let at = self.read_lane(x, lane);
         (self.s.m.select(c, any, at, first), any)
+    }
+
+    /// `v_readfirstlane_b32`'s result `first` of `own` in a pixel shader: a
+    /// helper lane takes its own value (upstream 0601955, Belobug f520772).
+    /// On the console whole-quad mode keeps helpers in EXEC, so a waterfall
+    /// loop serves them; on the host `WaveReadLaneFirst` reads no lane once
+    /// only helpers are left, and the loop runs to its limit with a wrong
+    /// descriptor. With its own value a helper matches in the first pass and
+    /// leaves; what it computes only feeds derivatives at triangle edges.
+    fn helper_reads_own(&mut self, own: V, first: V) -> V {
+        if !self.s.pixel {
+            return first;
+        }
+        let c = self.cur;
+        let helper = self
+            .s
+            .op(c, "isHelperLane.i1", Attr::ReadOnly, self.s.t.i1, 221, &[]);
+        self.s.m.select(c, helper, own, first)
     }
 
     fn read_lane(&mut self, x: V, lane: V) -> V {
@@ -4413,7 +4450,7 @@ impl<'a> Lower<'a> {
                 let t = self.s.m.bin(c, Bin::Or, t, or);
                 self.s.m.bin(c, Bin::Xor, t, xor)
             };
-            let r = if mesh_quad {
+            let r = if mesh_quad || self.helpers_read(quad) {
                 self.quad_pick(x, src)
             } else {
                 self.read_lane(x, src)
@@ -6725,7 +6762,7 @@ impl<'a> Lower<'a> {
                 (src, inside, masks, bound_ctrl)
             }
         };
-        let mut r = if mesh_quad {
+        let mut r = if mesh_quad || self.helpers_read(quad) {
             self.quad_pick(x, src)
         } else {
             self.read_lane(x, src)
@@ -7619,6 +7656,7 @@ impl<'a> Lower<'a> {
                 } else {
                     mine
                 };
+                let r = self.helper_reads_own(a, r);
                 int(self, r)
             }
             _ => {
@@ -11291,13 +11329,23 @@ fn interp_mode(kind: Barycentric) -> Option<u8> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Lowered, Numeric, Parts, buffer_format, half_shift, lower};
+    use super::{Lowered, Numeric, Parts, buffer_format, half_shift, helpers_read_for, lower};
     use crate::native::{
         ComputeIo, HwStage, NativeProgram, ResourceType, RootParam, RootType, StageIo, UsedResource,
     };
     use crate::{io, ir, resource, structure};
 
     const S_ENDPGM: u32 = 0xBF81_0000;
+
+    /// A pixel program's quad read reaches helpers (triangle edges, discards);
+    /// other stages and non-quad lane reads keep the wave-read path.
+    #[test]
+    fn pixel_quad_reads_reach_helpers() {
+        assert!(helpers_read_for(true, true));
+        assert!(!helpers_read_for(true, false));
+        assert!(!helpers_read_for(false, true));
+        assert!(!helpers_read_for(false, false));
+    }
 
     #[test]
     fn packed_pixel_inputs_find_their_second_row() {

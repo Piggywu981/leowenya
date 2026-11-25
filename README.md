@@ -32,7 +32,30 @@ See our notes below.
 
 ### Newest (2026-11-25, later the same day)
 
-**Latest: indirect-draw window safety guard from CCS03.**
+**Latest: pixel quad reads reach helper lanes at triangle edges.**
+- In a pixel program, a quad read of another lane now goes through DXIL quad
+  operations even for the helper lanes a triangle edge or a discard leaves
+  in the quad. Host wave reads return 0 from helpers, so a hand-made
+  derivative took the wrong (smallest) mip and drew lines along every
+  triangle edge on car paint, glass and skin. Ported from upstream VIctory
+  `4015a18` (and Belobug `03629f3`): `helpers_read_for` in
+  `victory-shader/src/emit/lower.rs`, applied at both quad-local lane-read
+  sites. The companion fix for `v_readfirstlane` (upstream `0601955`,
+  Belobug `f520772`) is in too: a helper lane reads its own value, so a
+  waterfall loop does not spin to its limit with a wrong descriptor.
+  New test `pixel_quad_reads_reach_helpers`; full shader suite is 212 passed
+  with only the four pre-existing ray-intersection failures. This is a
+  picture-quality fix, not a frame-rate one.
+  Live run on this machine (2026-11-25, diag build, first run with an empty
+  shader cache): with `VICTORY_INDIRECT_WINDOW=1` and in-flight fetch off,
+  the title booted, played its cutscenes and reached the 3D world; 2,000+
+  frames captured, no device loss and no `crashes.log` entry. The picture
+  is lit and textured (see `capture/frame-2048.png`): the missing magenta
+  and black rooms are gone. The world is still overexposed with the fixed
+  ambient level -- a picture-quality task for a later round. Frame-rate
+  A/B against the window-off path still needs a warm cache.
+
+**Indirect-draw window safety guard from CCS03.**
 - The clamp shader drops garbage draw records asking for 2^23 vertices or
   instances an instance or more (they cannot be the title's meshes). CCS03
   traced the device losses of `VICTORY_INDIRECT_WINDOW` to such records: a
