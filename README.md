@@ -32,7 +32,17 @@ See our notes below.
 
 ### Newest (2026-11-25, later the same day)
 
-**Latest: driver watch, ported unchanged from victory-fork.**
+**Latest: guarded views walk only dirty gaps (ccs03 538749f).**
+- `victory-gpu/src/watch.rs`: the set of clean 64 KiB guard blocks is now a
+  run-length structure (`CleanBlocks`) instead of one entry per block.
+  Refreshing a view's guards used to collect and scan ~150,000 clean block
+  entries a frame to find the few dirty ones; now a fully clean range is one
+  lookup and a mixed range visits only the gaps between clean runs. Ported
+  from ccs03 `538749f` (itself victory-fork PR 824). Tested here: the new
+  `clean_runs_match_per_block_tracking` exhaustively compares the runs
+  against per-block tracking, and all 16 guard/mapping tests pass.
+
+**Driver watch, ported unchanged from victory-fork.**
 - The layer now subscribes to the system event log's display-driver errors
   (`crates/victory-gpu/src/drvwatch.rs`, from victory-fork `a253706`, itself
   from the earlier frame-rate work). Every loss of the card in a run with
