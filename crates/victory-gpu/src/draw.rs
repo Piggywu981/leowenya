@@ -188,6 +188,17 @@ fn windows() -> bool {
         && !crate::drvwatch::tripped()
 }
 
+/// Whether a single record that misses its window is gathered: given a slot
+/// the list's prelude fills in one pass with the list's other such records,
+/// instead of a pass of ours in front of its draw (`crate::indirect::gather`;
+/// `VICTORY_INDIRECT_GATHER=1`, victory-fork 465b94f). Off by default. Needs
+/// [`windows`].
+fn gathers() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("VICTORY_INDIRECT_GATHER").is_some_and(|v| v == "1"))
+        && windows()
+}
+
 /// What one title list has set, and what its host list was last given.
 #[derive(Default)]
 pub(crate) struct State {
@@ -2036,8 +2047,9 @@ impl State {
 
     /// Runs a dispatch on the host.
     pub(crate) fn dispatch(&mut self, list: &HostList, x: u32, y: u32, z: u32) {
-        // It may write the arguments a window holds clamped.
+        // It may write the arguments a window holds clamped, or a slot's.
         self.window = None;
+        list.gather_close();
         #[cfg(feature = "diagnostics")]
         if crate::pipeline::is_skipped(self.pipeline as This) {
             DROPPED.fetch_add(1, Ordering::Relaxed);
@@ -2383,6 +2395,7 @@ impl State {
     /// programs are one-dimensional).
     pub(crate) fn dispatch_mesh(&mut self, list: &HostList, x: u32) {
         self.window = None;
+        list.gather_close();
         #[cfg(feature = "diagnostics")]
         self.trace("mesh", x, 0);
         let ran = mesh_test() != 1
@@ -2774,6 +2787,7 @@ impl State {
         first_instance: u32,
     ) {
         self.window = None;
+        list.gather_close();
         #[cfg(feature = "diagnostics")]
         self.trace("draw", vertices, first);
         let ready = self.prepare(list, false);
@@ -2879,6 +2893,7 @@ impl State {
         first_instance: u32,
     ) {
         self.window = None;
+        list.gather_close();
         #[cfg(feature = "diagnostics")]
         self.trace("indexed", indices, first);
         // Indexed rectangles are drawn by the rectangle geometry stage
@@ -3013,6 +3028,9 @@ impl State {
         // reset) has another scratch buffer, or this one's with old bytes.
         if !windowed || list.first_use(WINDOW_USE) {
             self.window = None;
+            // A dispatch, or shaders that store to buffers: arguments may be
+            // written from here on (`crate::indirect::gather`).
+            list.gather_close();
         }
         let same = |w: &Window| w.copy == args.id() && w.kind == kind && w.stride == stride;
         let hit = self
@@ -3021,9 +3039,22 @@ impl State {
             .filter(|w| same(w) && offset >= w.base)
             .filter(|w| (offset - w.base) % u64::from(w.step) == 0 && (offset - w.base) / u64::from(w.step) < u64::from(w.records))
             .map(|w| (w.scratch.clone(), offset - w.base));
-        let (bounded, at) = match hit {
-            Some(hit) => hit,
-            None => {
+        // A record that misses its window: a slot the list's prelude fills,
+        // if the list still gathers (victory-fork 465b94f).
+        let gathered = if hit.is_none() && windowed && gathers() {
+            crate::indirect::gather(list, (&args.buffer, args.id()), offset, (kind, stride))
+        } else {
+            None
+        };
+        let (bounded, at) = match (hit, gathered) {
+            (Some(hit), _) => hit,
+            (None, Some((scratch, at))) => {
+                // The record's bytes are up to date when the list runs, as
+                // for a record clamped in the list.
+                args.refresh(list, arguments, len);
+                (scratch, at)
+            }
+            (None, None) => {
                 // A record a short step after the last window's last one
                 // (the same step as that window's, if it had one): the
                 // title walks the buffer, so the ones that step apart

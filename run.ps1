@@ -7,6 +7,7 @@
 #   powershell -ExecutionPolicy Bypass -File run.ps1 -NoAmbient  # A/B: leave ray-traced indirect light as-is
 #   powershell -ExecutionPolicy Bypass -File run.ps1 -NoTune     # A/B: only ambient, no perf switches
 #   powershell -ExecutionPolicy Bypass -File run.ps1 -Window      # A/B: clamp indirect draws in windows
+#   powershell -ExecutionPolicy Bypass -File run.ps1 -Window -Gather  # A/B: also gather scattered records (needs -Window)
 param(
   [switch]$Guide,
   [switch]$NoAmbient,
@@ -14,6 +15,7 @@ param(
   [switch]$NoMipSkip,
   [switch]$NoFetchInflight,
   [switch]$Window,
+  [switch]$Gather,
   [string]$Game = 'G:\Leonida\GTA6.Xbox.v1.0.2.1-CYBERLEEK\game_scarlett_master.exe',
   [string]$Profile = 'release'   # release (faster) or diag (capture/keys)
 )
@@ -73,12 +75,21 @@ if (-not $NoTune) {
   } else {
     Remove-Item 'Env:VICTORY_INDIRECT_WINDOW' -ErrorAction SilentlyContinue
   }
+  # Gather scattered indirect records for the list's prelude (victory-fork
+  # 465b94f, 10.3 fps): needs windows on. -Gather forces -Window.
+  if ($Gather) {
+    $env:VICTORY_INDIRECT_WINDOW = '1'
+    $env:VICTORY_INDIRECT_GATHER = '1'
+    $env:VICTORY_CARD_FETCH_INFLIGHT = '0'
+  } else {
+    Remove-Item 'Env:VICTORY_INDIRECT_GATHER' -ErrorAction SilentlyContinue
+  }
 } else {
   foreach ($v in 'VICTORY_LEVELS_ON_DEMAND','VICTORY_RELAY','VICTORY_LATE_WAIT',
                 'VICTORY_WIDE_BACK','VICTORY_CARD_REHASH_RUNS','VICTORY_JOIN_COPIES',
                 'VICTORY_WIDE_REFRESH','VICTORY_WIDE_TEXTURES',
                 'VICTORY_TEXTURE_MIP_SKIP','VICTORY_TEXTURE_MIP_SKIP_MIN',
-                'VICTORY_CARD_FETCH_INFLIGHT','VICTORY_INDIRECT_WINDOW') {
+                'VICTORY_CARD_FETCH_INFLIGHT','VICTORY_INDIRECT_WINDOW','VICTORY_INDIRECT_GATHER') {
     Remove-Item "Env:$v" -ErrorAction SilentlyContinue
   }
 }
@@ -93,9 +104,10 @@ if ($Guide -and $Profile -eq 'diag') {
 }
 
 $log = Join-Path $root 'run.log'
-$winOn = $Window -and -not $NoTune
-$fetchOn = -not $NoTune -and -not $NoFetchInflight -and -not $Window
-Write-Host "Launching $exe with AMBIENT=$(if($NoAmbient){'off'}else{'0.6'}), TUNE=$(-not $NoTune), WINDOW=$winOn, FETCH=$fetchOn, GUIDE=$Guide"
+$winOn = ($Window -or $Gather) -and -not $NoTune
+$fetchOn = -not $NoTune -and -not $NoFetchInflight -and -not $winOn
+$gatherOn = $Gather -and -not $NoTune
+Write-Host "Launching $exe with AMBIENT=$(if($NoAmbient){'off'}else{'0.6'}), TUNE=$(-not $NoTune), WINDOW=$winOn, GATHER=$gatherOn, FETCH=$fetchOn, GUIDE=$Guide"
 Write-Host "Log: $log"
 & $exe run $Game --unimplemented zero --execute 2>&1 | Tee-Object -FilePath $log
 Write-Host "Exited with $LASTEXITCODE"

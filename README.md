@@ -35,6 +35,29 @@ runs on two tracks at once — getting the image right, and getting frames.
 
 ## Recent work
 
+### Scattered indirect records gathered once per list (ported from victory-fork `465b94f`)
+
+`VICTORY_INDIRECT_GATHER=1` (with windows on) gives a draw whose record misses
+its window a slot in the list's scratch buffer, which the list's prelude fills
+with all such records in one clamp pass — instead of a compute pass of ours in
+front of each such draw. A dispatch, a direct draw, or shaders that may write
+arguments close gathering for that list. The title keeps its mesh records
+scattered up to 33,056 bytes apart in one ~100 MB argument buffer, so a
+window's fixed step cannot serve them; victory-fork measured 10.3 fps in the
+first rooms on an RTX 3090 Ti. Ported into `indirect.rs` (`GatherSet`,
+`gather`, `record_gathers`), `host.rs` (the list's `gather` state, `gather_slot`,
+`gather_close`, prelude and reset/close paths) and `draw.rs` (the switch and
+the gather-on-window-miss path). `run.ps1 -Window -Gather` enables it.
+
+New tests: `gathered_records_must_fit_the_clamp`, and a WARP test proving
+gathered records come out exactly as if clamped one by one (both pass). A live
+A/B on this machine (diag build, warm cache, cutscene scene, ~1,000-4,000
+draws a frame) showed **no measurable difference**: frames 256 to 1024 took
+about 18.2 s both with and without gather (~28 fps by frame-number
+advance). The scene's draw count is far below the 9,000 of victory-fork's
+measurement, so the clamp is not the bottleneck here; gather stays off by
+default and may matter once the world renders at full draw counts.
+
 ### Series S profile: the upscaler and interface plane (ported from ccs03)
 
 A large port of ccs03's Series S work, so `--console series-s` can in
@@ -154,7 +177,7 @@ the frame rate did not. What got it there, on top of the list below:
 ## Tools and diagnostics
 
 - `victory translate <shader file> --warm all --jobs N` translates every shader ahead of a run, on the CPU only (about 4.5-6.5 minutes here); the cache is keyed on translator source, so a build that does not touch the translator starts warm.
-- `run.ps1 -Profile diag` enables frame capture and scripted keys; `-Window` is the window A/B (and turns in-flight fetch off); `-NoAmbient`, `-NoTune`, `-NoMipSkip`, `-NoFetchInflight`, `-Guide` each isolate one comparison.
+- `run.ps1 -Profile diag` enables frame capture and scripted keys; `-Window` is the window A/B (and turns in-flight fetch off); `-Window -Gather` adds gathered records; `-NoAmbient`, `-NoTune`, `-NoMipSkip`, `-NoFetchInflight`, `-Guide` each isolate one comparison.
 - Counters, off or diagnostics-only: `VICTORY_MERGE_RACE=1` (title bytes a copy-back was about to overwrite with older values: none in 138,000 copy-backs), `VICTORY_WALLS_TRACE`, `VICTORY_CARD_ACCOUNTING`, and a census of copies the texture sweep never lets go.
 - `VICTORY_DRIVER_WATCH=0` disables the driver watch; `VICTORY_AMBIENT_FILE` (diagnostics builds) hot-tunes ambient's level, colour and shading from a file twice a second.
 
