@@ -2053,15 +2053,15 @@ pub(crate) fn mip_skip_for(desc: &ResourceDesc) -> u32 {
         let small_card = crate::host::host()
             .and_then(|h| h.video_memory())
             .is_some_and(|[budget, ..]| budget < 10 << 30);
-        // Off by default until the in-game A/B is confirmed on this card;
-        // set VICTORY_TEXTURE_MIP_SKIP=2 to opt in (upstream's small-card
-        // default). `small_card` is kept for the log line below.
+        // On small cards (<10 GB budget), default to skipping the two most
+        // detailed levels: A/B on the RTX 5070 Laptop 8 GB cut texture prep
+        // from ~90-1700 ms to 6-20 ms with no visible loss at 1080p.
+        // VICTORY_TEXTURE_MIP_SKIP=0 turns it off.
         let most = std::env::var("VICTORY_TEXTURE_MIP_SKIP")
             .ok()
             .and_then(|v| v.trim().parse::<u32>().ok())
-            .unwrap_or(0)
+            .unwrap_or(if small_card { 2 } else { 0 })
             .min(4);
-        let _ = small_card;
         let min = std::env::var("VICTORY_TEXTURE_MIP_SKIP_MIN")
             .ok()
             .and_then(|v| v.trim().parse::<u64>().ok())
