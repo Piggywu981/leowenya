@@ -156,6 +156,7 @@ Speed and memory:
 - Waits for memory values, write-watch queries and page queries no longer walk page tables per call.
 - Large title buffers get a copy in card memory, with shader writes found by hashing on the card.
 - Card-copy fetches fold into the submitting flight (`VICTORY_CARD_FETCH_INFLIGHT=1`, default on): the copy-back thread no longer waits on a separate fence. A/B on the RTX 5070 Laptop 8 GB cut copying-back from 338-452 ms to 37-81 ms per frame (from upstream victory-fork 9376fd6). `run.ps1 -NoFetchInflight` disables it.
+- Only a shader that can store by address declares title-memory copies written (PR916, from victory-fork): the ray-tracing structure builder reads by address but stores through views, so it used to mark every 4 MiB copy written -- 12 GB compared/frame. Copy-back stays 42-67 ms/frame in our runs.
 - Submissions can be sent ahead of the wait for the card (`VICTORY_LATE_WAIT`), with a relay thread that lands results as the card finishes (`VICTORY_RELAY`): in a first five-minute run the card's idle time behind the submitting thread fell from about 136 to 30 ms per frame.
 - Title memory can be opened as a graphics heap so that buffers are used in place instead of copied (`VICTORY_INPLACE`, first stage only; a probe confirmed the approach on the test GPU).
 - The bindless texture queue no longer uploads stale views; the view table no longer grows without bound; the pipeline library is mapped instead of read into memory.
