@@ -32,7 +32,23 @@ See our notes below.
 
 ### Newest (2026-11-25, later the same day)
 
-**Latest: pixel quad reads reach helper lanes at triangle edges.**
+**Latest: driver watch, ported unchanged from victory-fork.**
+- The layer now subscribes to the system event log's display-driver errors
+  (`crates/victory-gpu/src/drvwatch.rs`, from victory-fork `a253706`, itself
+  from the earlier frame-rate work). Every loss of the card in a run with
+  draw windows was announced by such an entry 2.7 to 6.3 seconds ahead;
+  now each is logged as it happens, counted in the periodic status, and the
+  **first one turns draw windows off for the rest of the run**, so a driver
+  fault costs a slower frame and not the card. On by default;
+  `VICTORY_DRIVER_WATCH=0` subscribes to nothing. `windows()` (in draw.rs)
+  now checks `!drvwatch::tripped()`. Verified on this machine: the EventLog
+  subscription is accepted (`the_system_takes_the_subscription`) and the
+  trip/count logic passes; full test suite has only the four pre-existing
+  ray-intersection failures. This gives `run.ps1 -Window` a safety net; the
+  window default is unchanged because an on/off frame-rate A/B is still
+  owed.
+
+**Pixel quad reads reach helper lanes at triangle edges.**
 - In a pixel program, a quad read of another lane now goes through DXIL quad
   operations even for the helper lanes a triangle edge or a discard leaves
   in the quad. Host wave reads return 0 from helpers, so a hand-made

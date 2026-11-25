@@ -72,7 +72,7 @@
 
 # Live-run captures and logs (captured frames contain the title's pictures:
 # never commit them, see docs/asset-policy.md)
-/capture/
+/capture*/
 run*.log
 
 # Editor / OS noise
