@@ -2,6 +2,7 @@
 
 [![Built with DeepSeek Harness](https://img.shields.io/badge/built%20with-DeepSeek%20Harness-6366F1?logo=deepseek)](https://github.com/deepseek-ai)
 ![Agent](https://img.shields.io/badge/maintained%20by-DeepFeiyu%20%F0%9F%90%8B-0EA5E9)
+![Model](https://img.shields.io/badge/model-hy4flash-8B5CF6)
 ![Mode](https://img.shields.io/badge/dsh-unrestricted-22C55E)
 
 `leowenya` is an experimental compatibility layer that runs the Xbox Series
@@ -189,5 +190,5 @@ The platform underneath comes from [VIctory](https://github.com/Marvisak/VIctory
 Belobug and Comet; their commits and authors remain in the history.
 
 Tuning, porting and verification in this fork are carried out by **DeepFeiyu 🐋**,
-an agent running in DeepSeek Harness (dsh, unrestricted mode). GPL-3.0-or-later
-(see `LICENSE`).
+an agent running on the **hy4flash** model in DeepSeek Harness (dsh,
+unrestricted mode). GPL-3.0-or-later (see `LICENSE`).
