@@ -150,10 +150,12 @@ Rendering:
 - Rectangle lists, depth and stencil twins for depth textures written by compute, texture read-backs.
 - Ray tracing, in progress and off by default: the game's own structure-builder programs translate, title memory can be read by raw address from shaders, the hardware ray/box and ray/triangle test is emulated in DXIL (checked against a reference on the GPU), and 59 of the 64 trace programs translate. Nothing is lit by it yet. See [docs/fork-ray-tracing.md](docs/fork-ray-tracing.md).
 - Indirect diffuse light is a constant floor while rays do not run (see above); the title's empty probe resolve no longer decides how dark a room is.
+- Integer render targets never blend (Belobug 86292110): D3D12 refuses blending on R8_UINT etc with E_INVALIDARG, and every draw on such a pipeline was silently lost (e.g. the first room walls). The host blend state now disables blending per integer target.
 
 Speed and memory:
 - Waits for memory values, write-watch queries and page queries no longer walk page tables per call.
 - Large title buffers get a copy in card memory, with shader writes found by hashing on the card.
+- Card-copy fetches fold into the submitting flight (`VICTORY_CARD_FETCH_INFLIGHT=1`, default on): the copy-back thread no longer waits on a separate fence. A/B on the RTX 5070 Laptop 8 GB cut copying-back from 338-452 ms to 37-81 ms per frame (from upstream victory-fork 9376fd6). `run.ps1 -NoFetchInflight` disables it.
 - Submissions can be sent ahead of the wait for the card (`VICTORY_LATE_WAIT`), with a relay thread that lands results as the card finishes (`VICTORY_RELAY`): in a first five-minute run the card's idle time behind the submitting thread fell from about 136 to 30 ms per frame.
 - Title memory can be opened as a graphics heap so that buffers are used in place instead of copied (`VICTORY_INPLACE`, first stage only; a probe confirmed the approach on the test GPU).
 - The bindless texture queue no longer uploads stale views; the view table no longer grows without bound; the pipeline library is mapped instead of read into memory.

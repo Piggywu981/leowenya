@@ -11,6 +11,7 @@ param(
   [switch]$NoAmbient,
   [switch]$NoTune,
   [switch]$NoMipSkip,
+  [switch]$NoFetchInflight,
   [string]$Game = 'G:\Leonida\GTA6.Xbox.v1.0.2.1-CYBERLEEK\game_scarlett_master.exe',
   [string]$Profile = 'release'   # release (faster) or diag (capture/keys)
 )
@@ -53,11 +54,20 @@ if (-not $NoTune) {
   if ($NoMipSkip) {
     $env:VICTORY_TEXTURE_MIP_SKIP = '0'
   }
+  # Card-copy fetches fold into the submitting flight by default: A/B on this
+  # card cut copying-back from 338-452 ms to 37-81 ms per frame.
+  # -NoFetchInflight turns it off for comparison.
+  if ($NoFetchInflight) {
+    $env:VICTORY_CARD_FETCH_INFLIGHT = '0'
+  } else {
+    $env:VICTORY_CARD_FETCH_INFLIGHT = '1'
+  }
 } else {
   foreach ($v in 'VICTORY_LEVELS_ON_DEMAND','VICTORY_RELAY','VICTORY_LATE_WAIT',
                 'VICTORY_WIDE_BACK','VICTORY_CARD_REHASH_RUNS','VICTORY_JOIN_COPIES',
                 'VICTORY_WIDE_REFRESH','VICTORY_WIDE_TEXTURES',
-                'VICTORY_TEXTURE_MIP_SKIP','VICTORY_TEXTURE_MIP_SKIP_MIN') {
+                'VICTORY_TEXTURE_MIP_SKIP','VICTORY_TEXTURE_MIP_SKIP_MIN',
+                'VICTORY_CARD_FETCH_INFLIGHT') {
     Remove-Item "Env:$v" -ErrorAction SilentlyContinue
   }
 }
