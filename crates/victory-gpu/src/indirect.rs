@@ -47,6 +47,9 @@ RWByteAddressBuffer dst_args : register(u0);
 // records run empty.
 RWByteAddressBuffer budget : register(u1);
 static const uint BUDGET = 1u << 27;
+// A draw of this many vertices or indices an instance is not the title's
+// (no console mesh has 2.8 million triangles): garbage record, run empty.
+static const uint MOST_DRAW = 1u << 23;
 // Groups of one dispatch; more run empty.
 static const uint GROUPS = 1u << 20;
 [RootSignature(RS)]
@@ -72,6 +75,18 @@ void main(uint3 id : SV_DispatchThreadID) {
         uint count = min(asked.x, 1u << 24);
         uint instances = min(asked.y, (1u << 26) / max(count, 1u));
         cost = count * instances;
+        // A record asking MOST_DRAW vertices/indices an instance or more is
+        // garbage, not a draw of the title's. Window 206's checker found one
+        // list with 90 records of 2^24 vertices: clamped one at a time its
+        // budget let eight through, but a window charges a record once
+        // however often it is drawn, so all 90 ran -- 1.5 billion vertices
+        // in one list, in the runs that lost the device (CCS03, from
+        // victory-fork). Empty it and charge nothing, window or not.
+        if (count >= MOST_DRAW) {
+            count = 0;
+            instances = 0;
+            cost = 0;
+        }
         draw_counts = uint2(count, instances);
     } else if (kind == 2) {
         uint3 asked = src_args.Load3(src_at);
@@ -1181,9 +1196,13 @@ void main() {
 
         let mut initial_src = vec![0u8; total_bytes];
         for i in 0..RECORDS as usize {
+            // Record 0 asks for 2^24 indices: no draw of the title's, it runs
+            // empty and charges nothing (the MOST_DRAW guard). The rest are
+            // real draws of 2^22 indices x 16 instances (cost = 1 << 26),
+            // enough to saturate the budget without hitting that guard.
             let words: [u32; 6] = [
-                u32::MAX,                    // IndexCount -> clamps to 1 << 24
-                u32::MAX,                    // InstanceCount -> clamps to 4 (cost = 1 << 26)
+                if i == 0 { 1 << 24 } else { 1 << 22 }, // IndexCount
+                if i == 0 { 1 } else { u32::MAX },      // InstanceCount -> clamps to 16
                 1000 + i as u32,             // StartIndexLocation
                 (-200i32 + i as i32) as u32, // BaseVertexLocation
                 5000 + i as u32,             // StartInstanceLocation
@@ -1252,7 +1271,11 @@ void main() {
         let mut zeroed = 0usize;
         for i in 0..RECORDS as usize {
             let rec = &out_words[i * 6..(i + 1) * 6];
-            if rec[0] == (1 << 24) && rec[1] == 4 {
+            if rec[0] == (1 << 22) && rec[1] == 16 {
+                // Which two real draws fit depends on the order the clamp's
+                // threads charge the budget; the software adapter does not
+                // keep it. Two do. Record 0 is never kept: it is no draw.
+                assert!(i != 0, "the record that is no draw is never kept");
                 kept += 1;
             } else {
                 assert_eq!((rec[0], rec[1]), (0, 0), "excess draw must be zeroed");

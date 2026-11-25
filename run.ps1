@@ -6,12 +6,14 @@
 #   powershell -ExecutionPolicy Bypass -File run.ps1 -Guide      # walk the first-run wizard with scripted keys
 #   powershell -ExecutionPolicy Bypass -File run.ps1 -NoAmbient  # A/B: leave ray-traced indirect light as-is
 #   powershell -ExecutionPolicy Bypass -File run.ps1 -NoTune     # A/B: only ambient, no perf switches
+#   powershell -ExecutionPolicy Bypass -File run.ps1 -Window      # A/B: clamp indirect draws in windows
 param(
   [switch]$Guide,
   [switch]$NoAmbient,
   [switch]$NoTune,
   [switch]$NoMipSkip,
   [switch]$NoFetchInflight,
+  [switch]$Window,
   [string]$Game = 'G:\Leonida\GTA6.Xbox.v1.0.2.1-CYBERLEEK\game_scarlett_master.exe',
   [string]$Profile = 'release'   # release (faster) or diag (capture/keys)
 )
@@ -57,17 +59,26 @@ if (-not $NoTune) {
   # Card-copy fetches fold into the submitting flight by default: A/B on this
   # card cut copying-back from 338-452 ms to 37-81 ms per frame.
   # -NoFetchInflight turns it off for comparison.
-  if ($NoFetchInflight) {
+  # Window clamps (CCS03): 100-150 ms -> 35-80 ms of GPU time per frame here.
+  # They MUST NOT run together with in-flight fetch: that combination lost
+  # the device in CCS03's runs. -Window therefore forces fetch off.
+  $fetchOff = $NoFetchInflight -or $Window
+  if ($fetchOff) {
     $env:VICTORY_CARD_FETCH_INFLIGHT = '0'
   } else {
     $env:VICTORY_CARD_FETCH_INFLIGHT = '1'
+  }
+  if ($Window) {
+    $env:VICTORY_INDIRECT_WINDOW = '1'
+  } else {
+    Remove-Item 'Env:VICTORY_INDIRECT_WINDOW' -ErrorAction SilentlyContinue
   }
 } else {
   foreach ($v in 'VICTORY_LEVELS_ON_DEMAND','VICTORY_RELAY','VICTORY_LATE_WAIT',
                 'VICTORY_WIDE_BACK','VICTORY_CARD_REHASH_RUNS','VICTORY_JOIN_COPIES',
                 'VICTORY_WIDE_REFRESH','VICTORY_WIDE_TEXTURES',
                 'VICTORY_TEXTURE_MIP_SKIP','VICTORY_TEXTURE_MIP_SKIP_MIN',
-                'VICTORY_CARD_FETCH_INFLIGHT') {
+                'VICTORY_CARD_FETCH_INFLIGHT','VICTORY_INDIRECT_WINDOW') {
     Remove-Item "Env:$v" -ErrorAction SilentlyContinue
   }
 }
@@ -82,7 +93,9 @@ if ($Guide -and $Profile -eq 'diag') {
 }
 
 $log = Join-Path $root 'run.log'
-Write-Host "Launching $exe with AMBIENT=$(if($NoAmbient){'off'}else{'0.6'}), TUNE=$(-not $NoTune), GUIDE=$Guide"
+$winOn = $Window -and -not $NoTune
+$fetchOn = -not $NoTune -and -not $NoFetchInflight -and -not $Window
+Write-Host "Launching $exe with AMBIENT=$(if($NoAmbient){'off'}else{'0.6'}), TUNE=$(-not $NoTune), WINDOW=$winOn, FETCH=$fetchOn, GUIDE=$Guide"
 Write-Host "Log: $log"
 & $exe run $Game --unimplemented zero --execute 2>&1 | Tee-Object -FilePath $log
 Write-Host "Exited with $LASTEXITCODE"

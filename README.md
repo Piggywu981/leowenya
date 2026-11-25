@@ -32,6 +32,18 @@ See our notes below.
 
 ### Newest (2026-11-25, later the same day)
 
+**Latest: indirect-draw window safety guard from CCS03.**
+- The clamp shader drops garbage draw records asking for 2^23 vertices or
+  instances an instance or more (they cannot be the title's meshes). CCS03
+  traced the device losses of `VICTORY_INDIRECT_WINDOW` to such records: a
+  window charges them once however often drawn, so a list of 90 of them ran
+  1.5 billion vertices. The `MOST_DRAW` guard empties them in every path.
+  `run.ps1 -Window` now makes the window switch available and forces
+  in-flight fetch off (the two together also lost the device in CCS03).
+  Still off by default; see "Tried and NOT in this tree" below. Verified:
+  all WARP clamp tests pass, full workspace test has only the four pre-
+  existing ray-intersection failures, release build clean.
+
 **Later: texture mip-skip for small cards (commit `ae865f5`).**
 - Host copies of large 2D textures the title fills leave out the two most
   detailed mips (`VICTORY_TEXTURE_MIP_SKIP=2`, **on by default** on cards under 10 GB): each level
@@ -90,10 +102,22 @@ What did it, on top of the list below:
   0 here, but the card got busier, so no gain is claimed yet). The frame is
   still 250 to 380 ms: the card is the limit now, most of it the
   per-record clamp before each of some 6,700 indirect draws a frame.
-- Tried and NOT in this tree: pull request #220 (cheaper indirect draws)
-  with `VICTORY_INDIRECT_WINDOW=1` cut the card's time from about 100-150
-  to 35-80 ms a frame here, and lost the device twice (once with a page
-  fault on the card after 160 s). Do not turn windows on with it yet.
+- Indirect draws clamped in windows are available as an A/B switch
+  (`run.ps1 -Window`, `VICTORY_INDIRECT_WINDOW=1`), still off by default.
+  Pull request #220 cut the card's time here from about 100-150 to 35-80 ms
+  a frame, but lost the device twice (once with a page fault on the card
+  after 160 s). CCS03 traced those losses to two things and fixed both:
+  a window charges a clamped record once however often it is drawn, so a
+  list of 90 records of 2^24 vertices all ran (1.5 billion vertices in one
+  list); and windows combined with in-flight fetch (#648) lost the device.
+  This tree now has CCS03's `MOST_DRAW` guard: a draw of 2^23 vertices or
+  instances an instance or more runs empty and charges nothing, window or
+  not (clamp shader in `victory-gpu/src/indirect.rs`, WARP test
+  `warp_budget_saturates_without_wraparound_and_preserves_draw_fields`).
+  `-Window` also forces in-flight fetch off. It is still off by default:
+  CCS03 lost the device once in eight runs even after the fix, and relies
+  on a driver watch that is not in this tree. On their NVIDIA 8 GB cards
+  windows measured 6.0 -> 8.9 fps in the first room.
 - Known and counted, not fixed yet: an indirect compute pass asks for
   about 77,500 thread groups in x where one dispatch runs 65,535 (the
   rest is cut off).
