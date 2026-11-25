@@ -10,6 +10,7 @@ param(
   [switch]$Guide,
   [switch]$NoAmbient,
   [switch]$NoTune,
+  [switch]$MipSkip,
   [string]$Game = 'G:\Leonida\GTA6.Xbox.v1.0.2.1-CYBERLEEK\game_scarlett_master.exe',
   [string]$Profile = 'release'   # release (faster) or diag (capture/keys)
 )
@@ -46,10 +47,17 @@ if (-not $NoTune) {
   $env:VICTORY_WIDE_REFRESH     = '1'   # refresh copies on a thread
   # VICTORY_WIDE_TEXTURES=1 is available but off: A/B on this 8 GB card showed
   # no clear gain (CCS03's gain was on a 3090 Ti where textures can reside).
+  # -MipSkip: drop the two most detailed mips of host copies on small cards so
+  # textures can reside; trades a little detail for fewer black surfaces.
+  if ($MipSkip) {
+    $env:VICTORY_TEXTURE_MIP_SKIP = '2'
+    $env:VICTORY_TEXTURE_MIP_SKIP_MIN = '512'
+  }
 } else {
   foreach ($v in 'VICTORY_LEVELS_ON_DEMAND','VICTORY_RELAY','VICTORY_LATE_WAIT',
                 'VICTORY_WIDE_BACK','VICTORY_CARD_REHASH_RUNS','VICTORY_JOIN_COPIES',
-                'VICTORY_WIDE_REFRESH','VICTORY_WIDE_TEXTURES') {
+                'VICTORY_WIDE_REFRESH','VICTORY_WIDE_TEXTURES',
+                'VICTORY_TEXTURE_MIP_SKIP','VICTORY_TEXTURE_MIP_SKIP_MIN') {
     Remove-Item "Env:$v" -ErrorAction SilentlyContinue
   }
 }

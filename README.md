@@ -32,6 +32,17 @@ See our notes below.
 
 ### Newest (2026-11-25, later the same day)
 
+**Later: texture mip-skip for small cards (commit `ae865f5`).**
+- Host copies of large 2D textures the title fills leave out the two most
+  detailed mips (`VICTORY_TEXTURE_MIP_SKIP=2`, default **off**): each level
+  left out quarters the card memory of that texture, so on an 8 GB card far
+  fewer textures stay un-hosted (black albedo). The staging reader follows
+  with a kept prefix (`subresource_read_span` + `tiled_need` check) and views
+  shift their level indices; copies into/out of such textures are refused.
+  Ported from Comet's `e82716d`. Enable with `run.ps1 -MipSkip`; it trades a
+  little fine detail for texture residency. The detile `TooSmall` bug found
+  in the first port is fixed (verified: no warnings with the switch on).
+
 **Evening: indirect light and the tuned launcher.**
 - A constant indirect-light floor (`crates/victory-gpu/src/ambient.rs`,
   commit `a2ee402`; ported from Belobug via CCS03 PR24). The title's probe
