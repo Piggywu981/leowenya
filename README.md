@@ -1,22 +1,27 @@
-# ztrx
+# leowenya
 
-**ztrx** runs the Xbox Series build of the game natively on Windows PCs with
-NVIDIA graphics cards, from game files you supply yourself.
+**leowenya** runs the Xbox Series build of the game natively on Windows PCs
+with NVIDIA graphics cards, from game files you supply yourself. It is our
+tuned tree based on [ztrx](https://github.com/Zettrox/ztrx) and
+[VIctory](https://github.com/Marvisak/VIctory)/victory-fork, with a launcher
+and settings A/B-tested on an RTX 5070 Laptop.
 
 **This repository contains no game files or assets.** You need your own copy
 of the game. Not affiliated with or endorsed by its developer or publisher.
 
 ## Status (2026-11-25)
 
-Tested on Windows 11 with an **NVIDIA GeForce RTX 3050** (8 GB) upstream; our target is RTX 5070 Laptop (8 GB, Blackwell). See our notes below.
+Tested on Windows 11 with an **NVIDIA GeForce RTX 3050** (8 GB) upstream;
+this fork is tuned and A/B-tested on an **RTX 5070 Laptop** (8 GB, Blackwell).
+See our notes below.
 
 | | |
 |---|---|
 | Boot, first-boot screens, intro, opening credits | works |
 | Prologue | playable from the cell to the boat chase: cell, cafeteria, robbery, police chase (wanted level, minimap), boat, binoculars |
 | Stability | 1 h 30 min+ in one session without a crash |
-| Frame rate | 1-3 fps in the world (the first run is slower while shaders translate; they are cached after that) |
-| Known problems | anything in shadow is black and bright scenes overexpose (the game's ray-traced lighting does not run yet); some blocky artifacts; boats sit low in the water |
+| Frame rate | menus 30 fps; 1-3 fps in the world (the first run is slower while shaders translate; they are cached after that) |
+| Known problems | shadows no longer go fully black with the ambient floor on, but lit detail is approximate and bright scenes still overexpose (ray-traced lighting does not run yet); some blocky artifacts; boats sit low in the water |
 
 ## Requirements
 
@@ -26,6 +31,20 @@ Tested on Windows 11 with an **NVIDIA GeForce RTX 3050** (8 GB) upstream; our ta
 - Several GB of free Windows commit memory (raise the paging file if `crashes.log` reports error 1455)
 
 ### Newest (2026-11-25, later the same day)
+
+**Evening: indirect light and the tuned launcher.**
+- A constant indirect-light floor (`crates/victory-gpu/src/ambient.rs`,
+  commit `a2ee402`; ported from Belobug via CCS03 PR24). The title's probe
+  resolve (`CS_ScreenProbes_TemporalResolve_*`) has no traced rays feeding it,
+  so its output was garbage or nothing. Just after that pass, a small compute
+  shader writes a fixed value (level `0.6`, tint `1.0/0.98/0.94`) into the
+  probe texture; the title's own lighting then applies it to surfaces.
+  `VICTORY_AMBIENT=<level>` sets the level (`0` = none);
+  `VICTORY_AMBIENT=off` leaves the title's output untouched. It lifts rooms
+  out of pitch black, but the light is uniform from every direction and does
+  not follow exposure or geometry; it goes away once ray tracing runs.
+- `run.ps1` loads those settings and the perf switches A/B-tested on the RTX
+  5070 Laptop (commit `bfd1e92`). See **Play this fork (run.ps1)** below.
 
 **Update, the same night: the first room now renders right on the test
 machine** (walls, textures, people, lamps), at 190 to 450 ms a frame (2 to 5
@@ -119,6 +138,7 @@ Rendering:
 - Implicit-level samples outside pixel shaders produced invalid DXIL in 730 compute programs; fixed.
 - Rectangle lists, depth and stencil twins for depth textures written by compute, texture read-backs.
 - Ray tracing, in progress and off by default: the game's own structure-builder programs translate, title memory can be read by raw address from shaders, the hardware ray/box and ray/triangle test is emulated in DXIL (checked against a reference on the GPU), and 59 of the 64 trace programs translate. Nothing is lit by it yet. See [docs/fork-ray-tracing.md](docs/fork-ray-tracing.md).
+- Indirect diffuse light is a constant floor while rays do not run (see above); the title's empty probe resolve no longer decides how dark a room is.
 
 Speed and memory:
 - Waits for memory values, write-watch queries and page queries no longer walk page tables per call.
@@ -137,7 +157,7 @@ Each is described in a comment where it is read.
 
 ### Known problems
 
-- Everything in shadow is black (see above).
+- Indirect light is a constant, not real bounce light: rooms are no longer pitch black, but shading stays flat and exposure is not followed (see above).
 - The interior of the first gameplay room is sometimes not drawn after the cutscene hands over to gameplay.
 - Around 24 GB of memory is in use during play.
 - A few style lints are switched off for this fork in the workspace `Cargo.toml` until the newer code is tidied.
@@ -212,7 +232,28 @@ cargo test --workspace                   # needs no game data
 cargo run -p victory -- config           # check your paths
 ```
 
-Run the title:
+### Play this fork (run.ps1)
+
+Build once, then use the launcher; it keeps the shader cache and saves in
+`%LOCALAPPDATA%\ztrx\cache` and `%LOCALAPPDATA%\ztrx\data` — the folder keeps
+its old `ztrx` name so existing saves and shader caches still load; never
+delete the data folder to fix a shader problem. Point `-Game` at your own copy of the
+title's executable if it is not at the path in the script.
+
+```powershell
+cargo build --release -p victory
+powershell -ExecutionPolicy Bypass -File run.ps1
+powershell -ExecutionPolicy Bypass -File run.ps1 -Guide -Profile diag  # scripted first-run wizard
+powershell -ExecutionPolicy Bypass -File run.ps1 -NoAmbient  # A/B: leave the title's own probe output
+powershell -ExecutionPolicy Bypass -File run.ps1 -NoTune     # A/B: only ambient, no perf switches
+```
+
+The launcher sets `VICTORY_AMBIENT=0.6` and a bundle of perf switches A/B-tested
+on this card: `VICTORY_LEVELS_ON_DEMAND=1`, `VICTORY_RELAY=2`,
+`VICTORY_LATE_WAIT=3`, `VICTORY_WIDE_BACK=1`, `VICTORY_CARD_REHASH_RUNS=1`,
+`VICTORY_JOIN_COPIES=1`, `VICTORY_WIDE_REFRESH=1`. `-NoTune` drops all of them.
+`-Guide` sends `VICTORY_KEYS` for the first-run wizard and needs `-Profile diag`;
+no buttons are pressed during normal play. Output is mirrored to `run.log`.
 
 ---
 
