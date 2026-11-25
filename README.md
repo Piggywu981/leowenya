@@ -150,6 +150,10 @@ Rendering:
 - Rectangle lists, depth and stencil twins for depth textures written by compute, texture read-backs.
 - Ray tracing, in progress and off by default: the game's own structure-builder programs translate, title memory can be read by raw address from shaders, the hardware ray/box and ray/triangle test is emulated in DXIL (checked against a reference on the GPU), and 59 of the 64 trace programs translate. Nothing is lit by it yet. See [docs/fork-ray-tracing.md](docs/fork-ray-tracing.md).
 - Indirect diffuse light is a constant floor while rays do not run (see above); the title's empty probe resolve no longer decides how dark a room is.
+- The ambient light has a tunable warm-white colour (VICTORY_AMBIENT_TINT=r,g,b) and,
+  where the light resolve reads the scene depth, less of it in creases and under objects
+  (VICTORY_AMBIENT_SHADE=strength,radius,near,tanY; from Belobug via cd9f78c/4ffc476).
+  Falls back to flat light when the depth view is not found.
 - Integer render targets never blend (Belobug 86292110): D3D12 refuses blending on R8_UINT etc with E_INVALIDARG, and every draw on such a pipeline was silently lost (e.g. the first room walls). The host blend state now disables blending per integer target.
 
 Speed and memory:
