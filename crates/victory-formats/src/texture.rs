@@ -577,6 +577,24 @@ impl Layout {
 
     /// Depth slices a subresource of mip `mip` covers: the mip's depth for
     /// 3D textures, else 1 (one array slice).
+    /// Byte range of one subresource (mip, array slice) in tiled memory.
+    /// Mips in the tail share blocks; only their own bytes are reported.
+    pub fn subresource_read_span(&self, mip: u32, slice: u32) -> Option<std::ops::Range<usize>> {
+        if self.desc.dimension != Dimension::Tex2d || !self.addressable() || slice >= self.slices {
+            return None;
+        }
+        let m = self.mips.get(mip as usize)?;
+        let start = u64::from(slice) * self.slice_size + m.offset;
+        let len = if m.tail.is_some() {
+            self.alignment
+        } else {
+            u64::from(m.pitch) * u64::from(m.rows) * u64::from(self.desc.element_bytes)
+        };
+        let end = start.checked_add(len)?;
+        if end > self.size { return None; }
+        Some(usize::try_from(start).ok()?..usize::try_from(end).ok()?)
+    }
+
     pub fn subresource_depth(&self, mip: u32) -> u32 {
         self.mips.get(mip as usize).map_or(0, |m| m.depth)
     }
@@ -650,7 +668,13 @@ impl Layout {
         } else {
             (dst.len(), src.len())
         };
-        if tiled_len < self.size as usize || linear_len < need || row_pitch < bytes {
+        // The tiled bytes must hold this subresource: a reader that leaves out
+        // the largest levels reads only the start of the texture (where the
+        // smaller levels lie), so check against its span, not the whole size.
+        let tiled_need = self
+            .subresource_read_span(mip, first)
+            .map_or(self.size as usize, |span| span.end);
+        if tiled_len < tiled_need || linear_len < need || row_pitch < bytes {
             return Err(Error::TooSmall);
         }
         let linear = self.desc.swizzle == Swizzle::LINEAR;

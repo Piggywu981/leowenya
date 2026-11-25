@@ -41,8 +41,14 @@ pub(crate) struct Staging {
     footprints: Vec<D3D12_PLACED_SUBRESOURCE_FOOTPRINT>,
     rows: Vec<u32>,
     layout: victory_formats::texture::Layout,
-    /// Mips per array slice.
+    /// Mips per array slice (of the host copy).
     mips: u32,
+    /// Most detailed title levels left out by the host copy
+    /// (`crate::resource::mip_skip_for`): host level m is title m + skip.
+    skip: u32,
+    /// Bytes of title memory read: all, or the prefix holding the levels
+    /// kept (mip 0 is last on the console, so a prefix suffices).
+    read_len: usize,
     /// The staging buffer's bytes (counted in `STAGED` while it lives).
     bytes: u64,
     memory: *const u8,
@@ -892,7 +898,7 @@ impl Staging {
 
     /// The title memory the texture is read from: address and bytes.
     pub(crate) fn memory(&self) -> (usize, usize) {
-        (self.memory as usize, self.layout.size as usize)
+        (self.memory as usize, self.read_len)
     }
 
     /// Detiles the texture memory into the staging buffer if it changed
@@ -915,7 +921,7 @@ impl Staging {
     }
 
     fn refresh_timed(&self) -> usize {
-        let size = self.layout.size as usize;
+        let size = self.read_len;
         let start = self.memory as usize;
         let mut last = waited(0, || self.last.lock().unwrap_or_else(|e| e.into_inner()));
         let last = &mut *last;
@@ -1094,7 +1100,7 @@ impl Staging {
             );
         }
         for (i, (footprint, &rows)) in self.footprints.iter().zip(&self.rows).enumerate() {
-            let (mip, slice) = (i as u32 % self.mips, i as u32 / self.mips);
+            let (mip, slice) = (i as u32 % self.mips + self.skip, i as u32 / self.mips);
             let f = footprint.Footprint;
             let pitch = f.RowPitch as usize;
             let len = pitch * rows as usize * f.Depth as usize;
@@ -1192,7 +1198,7 @@ pub(crate) fn staged(resource: This) -> Option<(u64, bool)> {
         let map = STAGING.lock().unwrap_or_else(|e| e.into_inner());
         map.as_ref()?.get(&(resource as usize))?.clone()
     };
-    let size = s.layout.size as usize;
+    let size = s.read_len;
     Some((size as u64, committed(s.memory, size)))
 }
 
@@ -1348,6 +1354,26 @@ pub(crate) fn mapped_bytes(at: *const u8, len: usize) -> u64 {
     there
 }
 
+/// With the `skip` largest levels of a one-slice 2D texture left out: the
+/// bytes from the texture's start that hold every level kept, if they all
+/// lie before the largest level left out (the console layout puts mip 0
+/// last). `None`: read it all.
+fn kept_prefix(layout: &victory_formats::texture::Layout, skip: u32) -> Option<usize> {
+    if skip == 0 || layout.slices != 1 {
+        return None;
+    }
+    let first_left_out = layout.subresource_read_span(skip - 1, 0)?.start;
+    let kept_end = (skip..layout.desc.mips)
+        .map(|m| layout.subresource_read_span(m, 0).map(|r| r.end))
+        .collect::<Option<Vec<_>>>()?
+        .into_iter()
+        .max()?;
+    (first_left_out > 0 && kept_end <= first_left_out).then_some(first_left_out)
+}
+
+/// Bytes of title memory not read because levels are left out.
+pub(crate) static SKIPPED_READ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 /// The staging state of a title texture, made on first use.
 fn staging(resource: This, texture: &ID3D12Resource) -> Option<Arc<Staging>> {
     // Asked before the table is locked: the sweep lets go of a staging
@@ -1405,6 +1431,22 @@ fn staging(resource: This, texture: &ID3D12Resource) -> Option<Arc<Staging>> {
     tracing::debug!(?desc, total, "texture contents uploaded from title memory");
     STAGED[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     STAGED[1].fetch_add(total, std::sync::atomic::Ordering::Relaxed);
+    // A 2D texture whose host copy left out levels: read only the prefix
+    // holding the kept levels (mip 0 is last on the console).
+    let skip = if d.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE2D
+        && d.DepthOrArraySize == 1
+    {
+        layout.desc.mips.saturating_sub(u32::from(d.MipLevels))
+    } else {
+        0
+    };
+    let read_len = kept_prefix(&layout, skip).unwrap_or(layout.size as usize);
+    if skip > 0 {
+        SKIPPED_READ.fetch_add(
+            layout.size.saturating_sub(read_len as u64),
+            std::sync::atomic::Ordering::Relaxed,
+        );
+    }
     let s = Arc::new(Staging {
         buffer,
         #[cfg(feature = "diagnostics")]
@@ -1414,6 +1456,8 @@ fn staging(resource: This, texture: &ID3D12Resource) -> Option<Arc<Staging>> {
         rows,
         layout,
         mips: u32::from(d.MipLevels),
+        skip,
+        read_len,
         bytes: total,
         memory,
         last: Mutex::default(),

@@ -846,6 +846,9 @@ extern "system" fn copy_resource(this: This, dst: This, src: This) {
         let Some(list) = host_list(this) else {
             return;
         };
+        // The title copies into this texture: it keeps every level so the
+        // copy lands where the title put it (VICTORY_TEXTURE_MIP_SKIP).
+        crate::resource::keep_all_levels(dst);
         if let (Some(to), Some(from)) = (
             crate::resource::host_resource(dst),
             crate::resource::host_resource(src),
@@ -921,6 +924,20 @@ extern "system" fn copy_texture_region(
         else {
             return;
         };
+        // The title copies into this texture: it keeps every level.
+        crate::resource::keep_all_levels(dst.resource);
+        // A host copy that leaves out levels has different subresource
+        // numbers than the title's: no copy is made (V2 correctness fix).
+        if crate::resource::mip_skip(dst.resource) > 0
+            || crate::resource::mip_skip(src.resource) > 0
+        {
+            let n = crate::resource::MIP_SKIPPED[1]
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+            if n.is_power_of_two() {
+                tracing::info!(n, "a copy names a texture whose host copy leaves out levels: not made");
+            }
+            return;
+        }
         let Some(to) = crate::resource::host_resource(dst.resource) else {
             // Texture to buffer: a read back. The list copies the texels
             // into a host buffer of ours; once it has run they go to the
