@@ -30,7 +30,7 @@ $env:VICTORY_DATA_DIR  = "$env:LOCALAPPDATA\ztrx\data"
 
 # --- indirect light: constant until ray tracing runs (a2ee402) ---
 if ($NoAmbient) {
-  Remove-Item Env:VICTORY_AMBIENT -ErrorAction SilentlyContinue
+  $env:VICTORY_AMBIENT = 'off'   # leave the title's own probe output
 } else {
   $env:VICTORY_AMBIENT = '0.6'
 }
@@ -44,10 +44,12 @@ if (-not $NoTune) {
   $env:VICTORY_CARD_REHASH_RUNS = '1'
   $env:VICTORY_JOIN_COPIES      = '1'   # one kernel step for adjacent copies
   $env:VICTORY_WIDE_REFRESH     = '1'   # refresh copies on a thread
+  # VICTORY_WIDE_TEXTURES=1 is available but off: A/B on this 8 GB card showed
+  # no clear gain (CCS03's gain was on a 3090 Ti where textures can reside).
 } else {
   foreach ($v in 'VICTORY_LEVELS_ON_DEMAND','VICTORY_RELAY','VICTORY_LATE_WAIT',
                 'VICTORY_WIDE_BACK','VICTORY_CARD_REHASH_RUNS','VICTORY_JOIN_COPIES',
-                'VICTORY_WIDE_REFRESH') {
+                'VICTORY_WIDE_REFRESH','VICTORY_WIDE_TEXTURES') {
     Remove-Item "Env:$v" -ErrorAction SilentlyContinue
   }
 }
