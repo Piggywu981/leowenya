@@ -35,6 +35,17 @@ runs on two tracks at once — getting the image right, and getting frames.
 
 ## Recent work
 
+### Dynamic descriptor slots: find a free run across the search's start (victory-fork `4d0c634`)
+
+The search for `n` free dynamic slots went from its starting place to the end
+and then from the start up to that place, so a free run lying *across* the
+starting place was seen as two halves and never whole. A table was refused
+with room for it, and the "too long" shortcut then refused every table that
+size until the next release — the same symptom as the missing-pipeline draws
+in the world. The second part now continues past the starting place by `n-1`
+slots. New regression test `a_free_run_across_the_place_the_search_starts_from_is_found`
+holds the old search; full suite and release build pass. Upstream c1c32819.
+
 ### Batch the heap pass's buffer refreshes, share a read lock (ccs03 `cd6e283`)
 
 The view-heap buffer pass was the largest CPU bucket in the world

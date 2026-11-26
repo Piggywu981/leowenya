@@ -1060,15 +1060,20 @@ impl HostHeap {
         crate::copystat::add(crate::copystat::C::DynamicAsked, 1);
         let mut guard = self.next.lock().unwrap_or_else(|e| e.into_inner());
         let (next, taken) = &mut *guard;
-        let enough = self.free.load(std::sync::atomic::Ordering::Relaxed) >= n
-            && n < self.too_long.load(std::sync::atomic::Ordering::Relaxed);
+        let room = self.free.load(std::sync::atomic::Ordering::Relaxed) >= n;
+        let enough = room && n < self.too_long.load(std::sync::atomic::Ordering::Relaxed);
         let n = n as usize;
-        // Search from `next` on, then from the start.
-        let starts = (*next as usize..self.dynamic as usize).chain(0..*next as usize);
+        // Search from `next` on, then from the start and on past `next` by
+        // n - 1 slots: a free run that lies across `next` is found only there
+        // (the first part sees its end, the second its start; victory-fork
+        // 4d0c634, upstream c1c32819). Before this a table was refused with
+        // room for it and `too_long` then refused every table as long.
+        let (cursor, end) = (*next as usize, self.dynamic as usize);
+        let starts = (cursor..end).chain(0..(cursor + n - 1).min(end));
         let mut run = 0;
         let mut found = None;
         let mut last = usize::MAX;
-        for at in starts.take(if enough { DYNAMIC as usize } else { 0 }) {
+        for at in starts.take(if enough { usize::MAX } else { 0 }) {
             // A run cannot wrap past the end.
             if at != last.wrapping_add(1) {
                 run = 0;
@@ -3540,6 +3545,30 @@ mod tests {
         // Long after the last table, a write is due at once.
         heap.queue_texture(2, true, false, frame + 3 + TABLED_FRAMES);
         assert_eq!(slots(frame + 3 + TABLED_FRAMES), [2]);
+    }
+
+    /// A free run that lies across the place the search starts from is found
+    /// (victory-fork 4d0c634): the old search saw it as two halves.
+    #[test]
+    fn a_free_run_across_the_place_the_search_starts_from_is_found() {
+        let Some(heap) = HostHeap::new(false, 4) else {
+            return; // no host GPU
+        };
+        // Slots 0..8 and 8..16 of the ring: the search now starts at 16.
+        assert_eq!((heap.dynamic(8), heap.dynamic(8)), (Some(4), Some(12)));
+        // Everything after them, so that only what is given back is free.
+        let rest = heap.dynamic - 16;
+        assert_eq!(heap.dynamic(rest), Some(4 + 16));
+        // The search starts at 0 again. Slots 0..16 back, then 0..12 taken:
+        // it starts at 12, with 12..16 free.
+        heap.release(4, 16);
+        assert_eq!(heap.dynamic(12), Some(4));
+        // 10..12 back: the free run 10..16 lies across 12. Six slots fit
+        // only there.
+        heap.release(4 + 10, 2);
+        assert_eq!(heap.dynamic(6), Some(4 + 10));
+        // And nothing is found where nothing is.
+        assert_eq!(heap.dynamic(1), None);
     }
 
     #[test]
