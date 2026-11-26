@@ -35,6 +35,22 @@ runs on two tracks at once — getting the image right, and getting frames.
 
 ## Recent work
 
+### Slow pipelines stop hogging the compile workers (from avatarmanz `a30829c`)
+
+On a fresh pipeline cache, a few title pipelines take tens of seconds each to
+make. All workers were once busy inside those, while the world's first
+minutes dropped thousands of draws a frame for want of pipelines. Now the
+time each pipeline took is recorded beside the early-pipeline list
+(`slow-pipelines.txt`), and a pipeline known to take over a second is queued
+separately: at most a quarter of the workers make such slow, unrequested
+pipelines, leaving the rest free for the ones a draw actually waits for.
+`VICTORY_PIPELINE_SLOW=0` restores creation order. Ported into
+`pipeline/library.rs` (record/read slow times) and `pipeline/make.rs`
+(separate queue, `slow_limit`, worker accounting). New test
+`pipelines_known_to_take_long_leave_workers_for_the_others` passes; full
+suite and release build clean. Its effect on our cold-cache frames is not
+yet A/B'd.
+
 ### The title's idle threads no longer wait for free processors (from avatarmanz `0d065d3`)
 
 Six of the title's threads run at "idle", the streaming pager among them. On
