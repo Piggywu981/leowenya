@@ -500,3 +500,71 @@ already made them exact wave32. The draw-side group conversion is active
 not; that mismatch is the leading suspect for the surviving NONE pointer.
 Next: evaluate relaxing that condition for wave32-translated builder programs
 (and verify no wrong-shader regression) before touching node-bounds lore.
+
+### there guard: missing-page nodes never hit (2026-11-26)
+
+The previous "open gap" note is now **resolved**: relaxing that guard was a
+no-op. A temporary diagnostic (`CCOUNT-DIAG` / `CRUN-DIAG`, since removed)
+showed 37 spilled one-dimensional programs take the tail-lane early-out — and
+they already did under the original `(!wave64 || host>=64)` guard, because on
+a 32-lane host that guard reduces to `!wave64`. The relaxation only added four
+wave64 programs, which the precise `exchange.is_none()` guard rejected anyway.
+So the tail-lane early-out was never the blocker; it was already active in the
+run that crashed. (All diagnostic edits were reverted; lower.rs sat clean at
+12aa00f before the there-guard commit.)
+
+The node layout itself was checked field by field against avatarmanz, coolfox
+and ccs03: child pointers at bytes 0-15, `NONE = 0xffff_ffff`, 128-byte box's
+last 12 floats in the second 64-byte half — identical in every fork. So a
+wrong child-field offset was ruled out. What *was* missing from this tree was
+the third companion fix from avatarmanz `810efe5` / DexNom `bc3cd4b0`: a node
+in a title page with no host copy reads zeros — a child and a box that look
+like a hit. Ported the whole chain: `Lower.page_there` (the `copy != 0` signal
+`memory()` already computes but did not expose), `NodeAt::Memory.mapped`, a
+three-value `bvh_memory`, `bvh_second_half`, and a `there` phi ANDed into the
+hit predicate.
+
+## Closing archive — BVH builder write side (2026-11-26)
+
+Live runs, non-quarantined `VICTORY_BVH_BUILDER=1`, bad-value census by hand:
+
+| run | builder | bad values | outcome |
+|---|---|---|---|
+| b5bd53c-era | starts, 53 | `0x7c007c00fc00fc00` x8, `0xfc00fc00` x2 | crash ~10 s after start |
+| thread-dimensions (12aa00f) | starts, 53 | NONE x20, 32-bit -Inf x6 | **half-float sentinel gone**; still crash |
+| relaxed tail guard (diagnostic) | starts, 53 | NONE x26, `0x7c007c00` x4 | no-op; still crash |
+| there guard | starts, 53 | NONE x22, `0x7c007c00` x0 | micro-improvement; still crash |
+
+What each fix actually bought:
+- **value_uniform / first-lane proof** (earlier): made 53/53 builder pipelines
+  constructible and removed the `FIRSTLANE_OWN` approximation.
+- **thread-dimensions** (draw-side group-count conversion): effective — it
+  removed the `0x7c00/0xfc00` half-float empty-node sentinel entirely. Kept.
+- **relaxed tail guard**: confirmed no-op by diagnostic; reverted.
+- **there guard**: small positive (half sentinel 4 -> 0, NONE 26 -> 22),
+  no regression, but not a causal breakthrough. Kept as a correctness fix.
+
+**Why the builder write side is being closed.** The three-round shape change
+(half ±inf sentinel -> NONE-dominated) shows each fix removes a layer and
+exposes the next, without converging. The remaining NONE is `bvh::NONE`
+followed as a 64-bit pointer by the title's own traversal code: the empty-slot
+and there guards protect only the ray-instruction emulation (`intersect.rs`),
+not the title's independent node reads. Supporting evidence that this is not a
+translator-switch problem: the peer `fork-ray-tracing.md` lists dynamic-
+structure overlap among its **Known gaps**, and the working forks rely on the
+AMD GPU's wave64 hardware for these structures; this host is NVIDIA with
+32-lane waves, so the structural difference is fundamental. Continued
+micro-tuning of the builder writers has poor return.
+
+Status on close: `VICTORY_BVH_BUILDER=1` remains unsafe for normal play; `report`
+and `why` are the safe interfaces. The wave32 lowering line is independent and
+landed: refused 7 -> 0, not-translated 8 -> 3, stable-world draw loss
+~1872 -> ~414. The three remaining non-translating hashes
+(`f133e35e`, `6b82bc7d`, `02384a60`) have no published fix and are **archived**:
+`6b82bc7d`/`02384a60` would need `Container::digest` (P3) to try the two
+scene_kernel exceptions; `f133e35e` needs a DXIL-container route for the
+divergent-mask exchange (the ACCC `driver_loop` does not fire for it).
+The next line of attack is the builder's *uniformity* proof (avatarmanz
+`431cab5` / `7348b80` / `7bf91de`) or a wholesale comparison against a fork
+that boots the builder without crashing — both out of scope for this branch's
+close.
