@@ -35,6 +35,21 @@ runs on two tracks at once — getting the image right, and getting frames.
 
 ## Recent work
 
+### Two shader-translation fixes toward translating every used shader (avatarmanz)
+
+avatarmanz reached 25,790 of 25,985 shaders translating (the 195 left are
+unused geometry shaders); the world drops thousands of draws a frame for want
+of a host pipeline when a shader does not translate. Two self-contained fixes
+from that work are now ported:
+- level queries take no array slice (`lower.rs`, avatarmanz `41d3184`,
+  upstream VIctory `13091f6e`): the console code may pass anything there,
+  e.g. an unwritten register; DXIL wants it undefined.
+- one interpolation mode per signature row (`container.rs` `same_mode_per_row`
+  + `shader.rs`, avatarmanz `0dc5d1b`, upstream `13091f6e`): undecided float
+  elements take the row's agreed mode, as the console signature packed them.
+New test `a_row_keeps_one_interpolation_mode` passes; full suite and release
+build clean. The translation success count after these is not yet measured.
+
 ### Reflections are held to the ambient light (belobug `c3bd561`)
 
 The last write of the title's reflections in a frame (`CS_UpdateHistory`)
