@@ -6671,8 +6671,18 @@ impl Meter {
         );
         {
             let [texture_us, slots] = [0, 1].map(|i| crate::draw::HEAP_PASS_PARTS[i].swap(0, Ordering::Relaxed));
+            #[cfg(feature = "diagnostics")]
+            let [ready_us, copy_us] = [0, 1].map(|i| crate::draw::HEAP_PASS_STAGES[i].swap(0, Ordering::Relaxed));
+            #[cfg(not(feature = "diagnostics"))]
+            let [ready_us, copy_us] = [0, 0];
+            // The single "heap buffers ... ms" bucket hid where a slow pass
+            // spends its time: walking views to ready copies, moving them,
+            // or uploading picked textures. Name all three so an A/B can tell
+            // which stage an optimization touched.
             tracing::info!(
-                "the pass over the heap per frame (the frame line's \"heap buffers ... ms\" is both parts): {:.1} ms in its                  pass over textures picked by index; {:.0} buffer slots looked at by its pass over buffer views",
+                "the pass over the heap per frame (the frame line's \"heap buffers ... ms\" is these three stages): {:.1} ms readying picked host copies (mirror, spans, eligible); {:.1} ms in refresh_many copying them; {:.1} ms uploading textures picked by index; {:.0} buffer slots looked at by its pass over buffer views",
+                ready_us as f64 / 1e3 / frames,
+                copy_us as f64 / 1e3 / frames,
                 texture_us as f64 / 1e3 / frames,
                 slots as f64 / frames
             );

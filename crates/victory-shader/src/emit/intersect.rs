@@ -403,6 +403,14 @@ impl<'a> Lower<'a> {
             let on = self.s.m.bin(c, Bin::Xor, off, on);
             let hit = self.s.m.bin(c, Bin::And, through, before);
             let hit = self.s.m.bin(c, Bin::And, hit, on);
+            // Empty builder slots can have inverted infinite bounds that look
+            // like a hit but hold no child pointer. Without this guard such a
+            // slot contributes a garbage child pointer (the console's
+            // AB00AB00 half-float bounds read as an address), which crashes
+            // the title when traversal follows it. Ported from DexNom's
+            // intersect emitter; the matching guard is in bvh.rs.
+            let child_present = self.s.m.cmp(c, pred::NE, children[n], none);
+            let hit = self.s.m.bin(c, Bin::And, hit, child_present);
             ids[n] = self.s.m.select(c, hit, children[n], none);
             distances[n] = self.s.m.select(c, hit, enter, infinity);
         }
