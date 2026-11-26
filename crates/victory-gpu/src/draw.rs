@@ -382,6 +382,14 @@ pub(crate) static HEAP_BUFFER_MICROS: AtomicU64 = AtomicU64::new(0);
 /// picked by index that runs inside it (`heap_textures`), and the buffer
 /// slots the pass over buffer views looked at; since the last frame line.
 pub(crate) static HEAP_PASS_PARTS: [AtomicU64; 2] = [const { AtomicU64::new(0) }; 2];
+/// The other two stages of [`State::heap_buffers`] (microseconds, diagnostics):
+/// 0 = readying the picked slots' host copies (mirror loop, spans, eligible
+/// list), 1 = `Shadow::refresh_many` copying them. The texture stage is
+/// [`HEAP_PASS_PARTS`]`[0]`; all three account for most of
+/// [`HEAP_BUFFER_MICROS`]. Splitting them tells a slow pass whether its time
+/// is in walking views or moving memory (from the parallel worktree).
+#[cfg(feature = "diagnostics")]
+pub(crate) static HEAP_PASS_STAGES: [AtomicU64; 2] = [const { AtomicU64::new(0) }; 2];
 /// Textures brought up to date for shaders that pick them by index
 /// ([`State::heap_textures`]), the bytes of their memory, and the slots
 /// still waiting.
@@ -1525,7 +1533,13 @@ impl State {
             eligible.push((shadow, *from, to - from));
         }
         // All the spans under one lock of the list, not one each (ccs03 cd6e283).
+        #[cfg(feature = "diagnostics")]
+        let refresh_began = std::time::Instant::now();
+        #[cfg(feature = "diagnostics")]
+        HEAP_PASS_STAGES[0].fetch_add(refresh_began.duration_since(started).as_micros() as u64, Ordering::Relaxed);
         crate::shadow::Shadow::refresh_many(list, eligible);
+        #[cfg(feature = "diagnostics")]
+        HEAP_PASS_STAGES[1].fetch_add(refresh_began.elapsed().as_micros() as u64, Ordering::Relaxed);
         let textures_began = std::time::Instant::now();
         self.heap_textures(list, heap, host);
         HEAP_PASS_PARTS[0].fetch_add(textures_began.elapsed().as_micros() as u64, Ordering::Relaxed);

@@ -168,6 +168,15 @@ instrument. The leading public fork (avatarmanz, 16 fps) is on AMD RDNA3
 with native wave64; our NVIDIA 32-lane card emulates the refused programs,
 which is a structural gap no switch closes.
 
+A diagnostics-only split of the `heap buffers` bucket (from the parallel
+wave64-instrumentation worktree) measured where that time goes: in world
+frames it is the **"readying picked host copies" loop** (walking the view heap:
+mirror, spans, eligible list) at 214-916 ms and **texture upload** at
+161-752 ms, while `refresh_many` itself is only 0.6-22 ms and 8k-34k buffer
+slots are looked at. So the two leads are exactly what avatarmanz's
+`VICTORY_SYNC_IN_PLACE` (AVX2 in-place compare of changed heap records) and
+its upload worker address — not the copy itself.
+
 ### Indirect light now follows the sky (ported from belobug `4f62c2a`)
 
 The fixed ambient level was the cause of the overexposed picture: the same
