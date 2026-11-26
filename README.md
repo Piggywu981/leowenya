@@ -105,6 +105,28 @@ stays off by default here; it is kept because it is correct and may pay off in
 texture-bound scenes. `-HeapWorker` remains available for A/B; the frame line
 reports the worker's work and publishes per frame under diagnostics.
 
+### List calls written down by helper threads (`VICTORY_THIN`) — tried, dropped
+
+The title makes 45,000-60,000 command-list calls a frame and translating each
+inside the call costs ~3.5 us. coolfox (`3a99ee6`) writes the calls' arguments
+into a word stream and has 8 helper threads translate it into lists of ours;
+it measured 75 -> 68 ms on their machine. Ported a reduced form here (word
+stream + 8 helpers, back-list translation, waited for at submit, no submission
+line). **Measured here (2026-11-27, RTX 5070 Laptop 8 GB, release, both arms
+the default launcher switches and guide): recording ms per list call fell ~8%
+(with THIN 0.1295 vs without 0.1407; coolfox's 9% reproduced), it did not
+crash, but the end-to-end frame time did not improve** (~0.43 fps on vs ~0.38-0.67
+off, both swinging 0.3-2.0 in the streaming world), and the submitting thread's
+lock wait was slightly worse (1112 ms on vs 952 ms off). Frame breakdown from
+the acceptance run explains it: ~2203 ms/frame is ~1477 ms on the GPU (67-77%)
+and only ~507 ms CPU preparing, so a CPU-side recording win is a small term and
+the extra submit-side wait cancels it. The full upstream gain also depends on
+its asynchronous submission line (`queue::behind`, a further ~2800 lines this
+tree does not have). The experiment was reverted; `VICTORY_THIN` is not wired
+up here. The world frame is **GPU-bound** — the structural cost of running a
+wave64 title's ray tracing on 32-lane waves — not CPU list recording; no switch
+on the CPU side fixes it.
+
 ### Two shader-translation fixes toward translating every used shader (avatarmanz)
 
 avatarmanz reached 25,790 of 25,985 shaders translating (the 195 left are
