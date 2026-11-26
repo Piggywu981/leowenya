@@ -50,10 +50,17 @@ worker makes way (`VICTORY_BAKE_TEXTURES_MS`). Upstream measured the boat
 mission at 6.2-6.7 world frames/s without it and 8.65-9.53 with it on an RTX
 4070 12 GB. Ported with the local heap-pass and texture-no-wait changes kept
 intact; `cargo check --profile diag -p victory --features diagnostics` is clean.
-**The +40% is upstream's measurement on another card; our own A/B on the RTX
-5070 Laptop 8 GB has not run yet.** To try it, set `VICTORY_HEAP_WORKER=1`;
-the frame line reports the worker's own work and publishes per frame under
-diagnostics.
+**Measured here (2026-11-26, RTX 5070 Laptop 8 GB, diag build, same world
+scene at ~5,000 draws, same cache and tune, 20 stable frames each): the switch
+did not help.** Worker off: median 2027.5 ms/frame; on: 2141.5 ms/frame (within
+noise, slightly slower). The worker's own line shows 1-8 ms of work and 0-4
+slots published a frame: once the first-world texture stream has drained, the
+texture pass is not our bottleneck (the card is only 13-15% busy and preparing
+takes a few ms), so there is little to parallelise. Upstream's +40% was on an
+RTX 4070 at the boat mission where that pass is the wall. The switch therefore
+stays off by default here; it is kept because it is correct and may pay off in
+texture-bound scenes. `-HeapWorker` remains available for A/B; the frame line
+reports the worker's work and publishes per frame under diagnostics.
 
 ### Two shader-translation fixes toward translating every used shader (avatarmanz)
 
