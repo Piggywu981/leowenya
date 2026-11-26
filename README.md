@@ -35,6 +35,19 @@ runs on two tracks at once — getting the image right, and getting frames.
 
 ## Recent work
 
+### Batch the heap pass's buffer refreshes, share a read lock (ccs03 `cd6e283`)
+
+The view-heap buffer pass was the largest CPU bucket in the world
+(357-1231 ms a frame): it refreshes some 4,600 host-copy spans, and each
+`defer_refresh` took the list's lock on its own. Now the spans are collected
+and inserted under one lock (`Shadow::refresh_many` /
+`HostList::defer_refreshes`). The `BUFFERS` table, asked by every recording
+thread for every descriptor, is an `RwLock` with a read fast path: an ask for
+a buffer that already has its copy takes only the read lock, and the write
+lock is used just to register, release or make a copy first use. Ported from
+ccs03. The shadow test suite (28 tests) and the full suite pass; release
+build clean. Its effect on the heap-pass bucket still needs an A/B.
+
 ### Slow pipelines stop hogging the compile workers (from avatarmanz `a30829c`)
 
 On a fresh pipeline cache, a few title pipelines take tens of seconds each to
