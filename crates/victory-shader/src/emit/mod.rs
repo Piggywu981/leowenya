@@ -464,10 +464,16 @@ pub fn emit(
         // (`ptfx_CS_lightAtlas_Sprite` and `_Trail`). The 32-lane programs' form below, which
         // has no barrier, stays on.
         let wide_option = std::env::var_os("VICTORY_WAVE_WIDE");
-        // (scene_kernel's two digest exceptions from the port need a
-        // `Container::digest` this tree does not keep; the explicit switch
-        // and the driver_loop route below cover the wave64 programs here.)
-        let wide_on = wide_option.as_ref().is_some_and(|v| v == "1") || WAVE_WIDE_HERE.get();
+        // Both archived kernels use one logical wave per group and have
+        // validated wave32 PSOs on RTX. An explicit switch or a per-hash
+        // choice wins over these defaults.
+        let scene_kernel = matches!(native.io, crate::native::StageIo::Cs(cs) if cs.threads.iter().product::<u32>() == 64)
+            && matches!(
+                c.digest,
+                [0x58, 0x1d, 0xab, 0x2c, 0xd8, 0xbc, 0xf2, 0x2e, 0x5c, 0x96, 0x4b, 0x98, 0xe9, 0x03, 0x48, 0xd1]
+                    | [0x24, 0x31, 0xbb, 0xe7, 0xdc, 0x15, 0x4a, 0xd7, 0x59, 0xd2, 0x0b, 0xc9, 0x54, 0x82, 0x9c, 0x1c]
+            );
+        let wide_on = wide_option.as_ref().map_or(scene_kernel, |v| v == "1") || WAVE_WIDE_HERE.get();
         // A single guest wave can iterate an active-lane loop until both host
         // halves have finished. The precise latch and convergence conditions
         // for the driver compute route are checked by widen().
