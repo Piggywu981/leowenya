@@ -35,6 +35,27 @@ runs on two tracks at once — getting the image right, and getting frames.
 
 ## Recent work
 
+### Indirect light now follows the sky (ported from belobug `4f62c2a`)
+
+The fixed ambient level was the cause of the overexposed picture: the same
+0.6 at noon and at night. It now follows the sky. The title draws a small
+128x128 R16G16B16A16_FLOAT sky-paraboloid image (`ps_sky_paraboloid_reflection`)
+twice a frame; we keep that host copy (`ambient::sky_drawn`, called from the
+draw path when a bound shader draws the sky) and the ambient pass reads its
+mean. The level is `gain * mean^power + least`, with a bluish least so night
+does not go fully black — belobug's measured hand-set levels were 0.07 at
+night, 0.3 at dusk and 1.4 at noon against sky means of 0.001 to 0.65. On by
+default; `VICTORY_AMBIENT_SKY=off` restores the constant, and
+`gain,least,power` tunes it (also live from the ambient file). Ported from
+belobug's `705a2d0`/`e48eb83`/`c3bd561`/`4f62c2a`: `ambient.rs` plus a
+`draws_sky` flag in `pipeline.rs`, the `sky_drawn` call in `draw.rs`, and
+`HostList::transition_copy` in `host.rs`. `ambient_pass_builds` and the full
+suite pass; release build clean. Verified in a live run on this machine: the
+log shows `the sky image the ambient light would follow` and `ambient light
+follows the sky`, and a 3D-world frame of the prologue now has proper dark
+interiors and correctly lit skin/clothes instead of the washed-out picture
+the fixed 0.6 gave.
+
 ### Scattered indirect records gathered once per list (ported from victory-fork `465b94f`)
 
 `VICTORY_INDIRECT_GATHER=1` (with windows on) gives a draw whose record misses

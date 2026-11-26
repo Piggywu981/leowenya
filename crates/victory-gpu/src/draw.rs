@@ -878,6 +878,13 @@ impl State {
         if !self.bind(list, p, false) {
             return false;
         }
+        // The sky image the title just drew is the ambient light's colour
+        // (belobug 705a2d0): keep its host copy for the next light resolve.
+        if p.stages.iter().any(|s| s.shader.draws_sky)
+            && let Some(&sky) = self.targets.first()
+        {
+            crate::ambient::sky_drawn(sky);
+        }
         let l = &list.list;
         // Vertex buffers the input layout reads.
         let mut views = [D3D12_VERTEX_BUFFER_VIEW::default(); 32];
