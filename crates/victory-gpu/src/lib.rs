@@ -28,6 +28,8 @@ mod ambient;
 mod drvwatch;
 #[cfg(windows)]
 mod draw;
+#[cfg(windows)]
+mod heap_worker;
 pub mod dxgi;
 pub mod fence;
 pub mod frame;
