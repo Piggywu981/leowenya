@@ -144,6 +144,9 @@ fn shader(stage: &'static str, bytes: &[u8]) -> Arc<Shader> {
 #[cfg(windows)]
 pub(crate) struct Translated {
     pub(crate) host: victory_shader::emit::HostShader,
+    /// The compute program's thread-group size, for dispatches counted in
+    /// threads (the console's `DispatchX` flag 0x20).
+    pub(crate) threads: Option<[u32; 3]>,
     pub(crate) used: Vec<victory_shader::UsedResource>,
     /// Whether the shader's code can store to buffer memory ([`stores`]);
     /// true when its code is not known.
@@ -210,18 +213,20 @@ fn translate(container: &[u8]) -> Result<Translated, String> {
     let host = crate::shader_cache::host_shader(container)?;
     let stores = programs.is_empty() || programs.iter().any(stores);
     let address_stores = programs.is_empty() || programs.iter().any(stores_by_address);
-    let used = programs
-        .into_iter()
-        .find(|p| {
-            matches!(
-                p.stage,
-                HwStage::Vs | HwStage::Ps | HwStage::Ms | HwStage::Cs
-            )
-        })
-        .map(|p| p.used)
-        .unwrap_or_default();
+    let main = programs.into_iter().find(|p| {
+        matches!(
+            p.stage,
+            HwStage::Vs | HwStage::Ps | HwStage::Ms | HwStage::Cs
+        )
+    });
+    let threads = main.as_ref().and_then(|p| match &p.io {
+        victory_shader::native::StageIo::Cs(cs) => Some(cs.threads),
+        _ => None,
+    });
+    let used = main.map(|p| p.used).unwrap_or_default();
     Ok(Translated {
         host,
+        threads,
         used,
         stores,
         address_stores,
@@ -310,29 +315,100 @@ pub(crate) fn builder_off(why: &'static str) {
     }
 }
 
+/// `VICTORY_BVH_BUILDER`: off (unset), `report`, or `1` (run the builder).
+/// `report` walks the same gate and prints what blocks the builder but never
+/// runs a stage: the whole-builder rule once wrote garbage bounding boxes into
+/// title memory and killed the title (run 98), so a first look at which
+/// programs are missing should not need to risk that.
+#[cfg(windows)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BuilderMode {
+    Off,
+    Report,
+    Run,
+}
+
+#[cfg(windows)]
+fn parse_builder_mode(value: Option<&str>) -> BuilderMode {
+    match value {
+        Some("1") => BuilderMode::Run,
+        Some("report") => BuilderMode::Report,
+        _ => BuilderMode::Off,
+    }
+}
+
+#[cfg(windows)]
+fn builder_mode() -> BuilderMode {
+    static MODE: OnceLock<BuilderMode> = OnceLock::new();
+    *MODE.get_or_init(|| parse_builder_mode(std::env::var("VICTORY_BVH_BUILDER").ok().as_deref()))
+}
+
 /// At a dispatch of a builder pipeline: whether the builder runs (see
 /// [`Builder`]).
 #[cfg(windows)]
 pub(crate) fn builder_runs() -> bool {
-    static ALLOWED: OnceLock<bool> = OnceLock::new();
-    if !*ALLOWED.get_or_init(|| std::env::var_os("VICTORY_BVH_BUILDER").is_some_and(|v| v == "1")) {
+    let mode = builder_mode();
+    if mode == BuilderMode::Off {
         return false;
     }
     let mut b = BUILDER.lock().unwrap_or_else(|e| e.into_inner());
+    if mode == BuilderMode::Report {
+        // Report once, on the first builder dispatch: make every program the
+        // title created (the same synchronous make the run mode does, so the
+        // reasons are real rather than all "being made"), then name the ones
+        // that failed. No builder stage is ever executed.
+        static REPORTED: OnceLock<()> = OnceLock::new();
+        if REPORTED.set(()).is_ok() {
+            #[cfg(feature = "diagnostics")]
+            let detail: Vec<String> = b
+                .pipelines
+                .iter()
+                .map(|p| {
+                    make::now(p);
+                    make::missing(p).unwrap_or_else(|| "ready".into())
+                })
+                .collect();
+            #[cfg(not(feature = "diagnostics"))]
+            for p in b.pipelines.iter() {
+                make::now(p);
+            }
+            let ready = b.pipelines.iter().filter(|p| make::now(p)).count();
+            #[cfg(feature = "diagnostics")]
+            let failed: Vec<String> = detail.iter().filter(|d| *d != "ready").cloned().collect();
+            #[cfg(not(feature = "diagnostics"))]
+            let failed: Vec<String> = Vec::new();
+            tracing::info!(
+                pipelines = b.pipelines.len(),
+                ready,
+                ?failed,
+                "VICTORY_BVH_BUILDER=report: ray-tracing builder programs made, and why each of the rest lacks a host pipeline (no stage runs)"
+            );
+        }
+        return false;
+    }
     if b.off {
         return false;
     }
     if b.whole {
         return true;
     }
-    let unmade: Vec<String> = b.pipelines.iter().filter(|p| !make::now(p)).map(|p| make::names(p)).collect();
-    let missing = unmade.len();
-    if missing > 0 {
+    let absent: Vec<&Arc<make::Pending>> = b.pipelines.iter().filter(|p| !make::now(p)).collect();
+    if !absent.is_empty() {
+        // The count alone (the old warning) could not tell a refused pipeline
+        // from one that does not translate or is still being made, nor which
+        // program it was. Name each with the reason make::missing already
+        // computes, so one run with VICTORY_BVH_BUILDER=1 locates the blocker.
+        #[cfg(feature = "diagnostics")]
+        let why: Vec<String> = absent.iter().map(|p| make::missing(p).unwrap_or_default()).collect();
+        #[cfg(not(feature = "diagnostics"))]
+        let why: Vec<String> = Vec::new();
+        let missing = absent.len();
+        let of = b.pipelines.len();
         b.off = true;
         tracing::warn!(
             missing,
-            of = b.pipelines.len(),
-            unmade = ?unmade,
+            of,
+            ?why,
             "the ray-tracing structure builder stays off: not all of its programs have a host pipeline, and its stages run all or none"
         );
         return false;
@@ -783,6 +859,16 @@ pub fn save_pipeline_cache() {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(windows)]
+    #[test]
+    fn builder_mode_distinguishes_report_from_run() {
+        assert_eq!(super::parse_builder_mode(None), super::BuilderMode::Off);
+        assert_eq!(super::parse_builder_mode(Some("")), super::BuilderMode::Off);
+        assert_eq!(super::parse_builder_mode(Some("0")), super::BuilderMode::Off);
+        assert_eq!(super::parse_builder_mode(Some("report")), super::BuilderMode::Report);
+        assert_eq!(super::parse_builder_mode(Some("1")), super::BuilderMode::Run);
+    }
+
     #[cfg(all(windows, feature = "diagnostics"))]
     #[test]
     fn skip_hashes_accepts_full_hashes_only() {

@@ -389,12 +389,13 @@ pub(crate) enum Into<'a> {
 /// picked by index that runs inside it (`heap_textures`), and the buffer
 /// slots the pass over buffer views looked at; since the last frame line.
 pub(crate) static HEAP_PASS_PARTS: [AtomicU64; 2] = [const { AtomicU64::new(0) }; 2];
-/// The other two stages of [`State::heap_buffers`] (microseconds, diagnostics):
-/// 0 = readying the picked slots' host copies (mirror loop, spans, eligible
-/// list), 1 = `Shadow::refresh_many` copying them. The texture stage is
-/// [`HEAP_PASS_PARTS`]`[0]`; all three account for most of
-/// [`HEAP_BUFFER_MICROS`]. Splitting them tells a slow pass whether its time
-/// is in walking views or moving memory (from the parallel worktree).
+/// The other two stages of [`State::heap_buffers`] since the last frame line
+/// (microseconds): 0 = making the picked slots' host copies ready (the mirror
+/// loop, spans and eligible list); 1 = `Shadow::refresh_many`, the copy itself.
+/// The texture stage is [`HEAP_PASS_PARTS`]`[0]`; the three together account
+/// for about [`HEAP_BUFFER_MICROS`]. Splitting them tells a slow pass whose
+/// time is in walking views and whose is in moving memory, which the single
+/// bucket could not (diagnostics).
 #[cfg(feature = "diagnostics")]
 pub(crate) static HEAP_PASS_STAGES: [AtomicU64; 2] = [const { AtomicU64::new(0) }; 2];
 /// Textures brought up to date for shaders that pick them by index
@@ -801,9 +802,14 @@ impl State {
         dword: u32,
         memory: Option<&crate::memory::Ready>,
     ) -> u32 {
-        use victory_shader::emit::{USER_MEMORY_BASE, USER_VIEW_ADDRESS, USER_VIEW_BIAS};
+        use victory_shader::emit::{USER_DISPATCH_THREADS_X, USER_MEMORY_BASE, USER_VIEW_ADDRESS, USER_VIEW_BIAS};
         if kind == USER_MEMORY_BASE {
             return memory.map_or(0, |m| m.base);
+        }
+        // All of every group, unless the dispatch says otherwise. The host
+        // sets this word itself at a counted dispatch (`SetComputeRoot32BitConstant`).
+        if kind == USER_DISPATCH_THREADS_X {
+            return 0;
         }
         if kind == USER_VIEW_BIAS {
             // The view begins on 16 bytes of the copy the address finds
@@ -2127,7 +2133,7 @@ impl State {
     }
 
     /// Runs a dispatch on the host.
-    pub(crate) fn dispatch(&mut self, list: &HostList, x: u32, y: u32, z: u32) {
+    pub(crate) fn dispatch(&mut self, list: &HostList, x: u32, y: u32, z: u32, flags: u32) {
         // It may write the arguments a window holds clamped, or a slot's.
         self.window = None;
         list.gather_close();
@@ -2172,6 +2178,25 @@ impl State {
                 crate::pipeline::builder_off("one of its dispatches could not be bound");
             }
             return;
+        }
+        // Counted in threads: whole groups of them, and the program is told
+        // how many of the last one run, where it asks (its `bind` set that to
+        // all of them). A builder stage taken for groups ran up to 64x its
+        // threads and stored over the structures after its own (DexNom
+        // bc3cd4b0).
+        let size = (flags & THREAD_DIMENSIONS != 0 && thread_dimensions())
+            .then(|| p.stages.first().and_then(|s| s.translated().threads))
+            .flatten();
+        let threads = [x, y, z];
+        let [x, y, z] = size.map_or(threads, |size| dispatch_groups(threads, size));
+        if size.is_some() {
+            if !crate::pipeline::is_builder(self.pipeline as This) {
+                once!(pipeline = %p.name, "a dispatch counted in threads that is not the structure builder's");
+            }
+            if let Some((param, word)) = compute_word(p, victory_shader::emit::USER_DISPATCH_THREADS_X) {
+                // SAFETY: an open list; the root signature has the word.
+                unsafe { list.list.SetComputeRoot32BitConstant(param, threads[0], word) };
+            }
         }
         #[cfg(feature = "diagnostics")]
         list.note_op(|| self.op_text(format!("dispatch {x}x{y}x{z}"), true));
@@ -3582,5 +3607,49 @@ pub(crate) fn depth_bounds(list: &HostList, min: f32, max: f32) {
     {
         // SAFETY: an open list on a device that supports depth bounds.
         unsafe { l1.OMSetDepthBounds(min, max) };
+    }
+}
+
+/// `DispatchX`: the counts are threads (the console's dispatch initiator bit
+/// "use thread dimensions"; DexNom/VIctory bc3cd4b0). Taken for groups, a
+/// rehydration stage of the structure builder ran up to 64 times its threads
+/// and stored over the structures after its own.
+const THREAD_DIMENSIONS: u32 = 0x20;
+
+/// `VICTORY_THREAD_DIMENSIONS=0`: such counts are taken for groups, as before.
+fn thread_dimensions() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("VICTORY_THREAD_DIMENSIONS").is_none_or(|v| v != "0"))
+}
+
+/// The groups of `size` threads that hold `threads`.
+fn dispatch_groups(threads: [u32; 3], size: [u32; 3]) -> [u32; 3] {
+    std::array::from_fn(|i| threads[i].div_ceil(size[i]))
+}
+
+/// Where a compute pipeline's user data has a word the host computes: the
+/// root parameter and the dword in it.
+fn compute_word(p: &HostPipeline, kind: u32) -> Option<(u32, u32)> {
+    let stage = p.stages.first().filter(|_| p.compute)?;
+    let (param, _) = stage.user_data?;
+    let word = stage
+        .translated()
+        .host
+        .user_data
+        .iter()
+        .find(|u| u.root == RootType::Other(kind))?;
+    Some((param, word.index))
+}
+
+#[cfg(test)]
+mod thread_tests {
+    use super::*;
+
+    #[test]
+    fn threads_are_counted_in_the_programs_groups() {
+        assert_eq!(dispatch_groups([8847, 1, 1], [64, 1, 1]), [139, 1, 1]);
+        assert_eq!(dispatch_groups([74, 1, 1], [64, 1, 1]), [2, 1, 1]);
+        assert_eq!(dispatch_groups([32, 1, 1], [32, 1, 1]), [1, 1, 1]);
+        assert_eq!(dispatch_groups([0, 12, 9], [64, 4, 4]), [0, 3, 3]);
     }
 }

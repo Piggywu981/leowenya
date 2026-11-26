@@ -129,11 +129,12 @@ pub(crate) fn host_shader(container: &[u8]) -> Result<HostShader, String> {
 /// The containers (by the 16-digit hash the log names shaders with) whose
 /// wave64 compute program may take the wave-wide form on a host of 32-lane
 /// waves (`victory_shader::emit::with_wave_wide`): `VICTORY_WAVE_WIDE_ONLY`,
-/// a list of hashes, or by default the four programs of this title that
-/// come out of it with 32-lane waves and otherwise do not run at all on
-/// such a host (the driver refuses their 64-lane form: water transmission
-/// volumetrics, both kinds; particle visibility; the tiling of the
-/// screen-space reflection pass). `VICTORY_WAVE_WIDE_ONLY=none` allows none.
+/// a list of hashes, or by default the programs of this title that come out
+/// of it with 32-lane waves and otherwise do not run at all on such a host
+/// (the driver refuses their 64-lane form: water transmission volumetrics,
+/// particle visibility, the tiling of the screen-space reflection pass, and
+/// two Series S water transmission containers). `VICTORY_WAVE_WIDE_ONLY=none`
+/// allows none.
 static WAVE_WIDE: OnceLock<Vec<String>> = OnceLock::new();
 const WAVE_WIDE_DEFAULT: [&str; 6] = [
     "5dc3b25986622949",
@@ -146,12 +147,12 @@ const WAVE_WIDE_DEFAULT: [&str; 6] = [
 
 /// The containers whose first-lane reads where not every lane runs take the
 /// host wave's own first lane (`victory_shader::emit::with_firstlane_own`):
-/// `VICTORY_FIRSTLANE_OWN_ONLY`, or by default the three programs of the
-/// ray-tracing structure builder (`XboxBvhBuilder.dll`) that need it to
-/// translate for 32-lane waves. Their scans read a sum of scalars, the same
-/// in every lane of the console wave, which is where the host wave's own
-/// first lane is exact; without them the builder's other 49 programs cannot
-/// run either (its stages run all or none, `crate::pipeline`).
+/// `VICTORY_FIRSTLANE_OWN_ONLY`, or by default the programs of the ray-tracing
+/// structure builder (`XboxBvhBuilder.dll`) that need it to translate for
+/// 32-lane waves. Their scans read a sum of scalars, the same in every lane of
+/// the console wave, which is where the host wave's own first lane is exact;
+/// without them the builder's other 49 programs cannot run either (its stages
+/// run all or none, `crate::pipeline`).
 static FIRSTLANE_OWN: OnceLock<Vec<String>> = OnceLock::new();
 // (As the title passes them, then as `victory translate` finds them in the DLL.)
 const FIRSTLANE_OWN_DEFAULT: [&str; 6] = [

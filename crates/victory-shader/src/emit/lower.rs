@@ -87,9 +87,33 @@ enum Stop {
 }
 
 pub(crate) fn lower(parts: &Parts) -> Result<Lowered, ShaderError> {
+    lower_counted(parts, counted_in_threads(parts))
+}
+
+/// Whether the title dispatches the program by a count of threads whose last
+/// group may be partial: the structure builder's programs of one dimension.
+/// Their lanes past the count must not run (they count the lanes of a wave
+/// and store). Not where a group barrier would wait for lanes that left, nor
+/// where two host waves of 32 stand for a console wave (they exchange, which
+/// takes all lanes).
+fn counted_in_threads(parts: &Parts) -> bool {
+    let crate::native::StageIo::Cs(cs) = &parts.native.io else {
+        return false;
+    };
+    cs.threads[0] > 1
+        && cs.threads[1..] == [1, 1]
+        && crate::spill::is_spilled(parts.native)
+        && (!parts.native.wave64 || host_max_wave() >= 64)
+        && !parts.p.blocks.iter().flat_map(|b| &b.insts).any(|i| i.name() == "s_barrier")
+}
+
+/// [`lower`]; `counted`: the lanes past a dispatch's count of threads leave
+/// at once (`shader.rs` `USER_DISPATCH_THREADS_X`; after DexNom/VIctory
+/// bc3cd4b0, which does so for two of the programs by their digests).
+pub(super) fn lower_counted(parts: &Parts, counted: bool) -> Result<Lowered, ShaderError> {
     let mut bad = HashMap::new();
     loop {
-        match Lower::new(parts, &bad).run() {
+        match Lower::new(parts, &bad).run(counted) {
             Ok(l) => return Ok(l),
             Err(Stop::Retry(v, why)) => {
                 if bad.insert(v, why).is_some() {
@@ -244,6 +268,8 @@ struct Lower<'a> {
     fence_only: HashSet<usize>,
     /// A group barrier before every LDS access (a console wave run as two host waves).
     split_lds: bool,
+    /// Whether the page `memory` last looked for has a copy.
+    page_there: Option<V>,
     /// With `split_lds`, LDS accesses in lane branches: per IR block whether every lane runs
     /// it, and whether the host waves meet at its start and before its exit ([`lds_meetings`]).
     lds_meet: Option<(Vec<bool>, Vec<(bool, bool)>)>,
@@ -518,6 +544,151 @@ fn lane_uniform(p: &Program, st: &Structured, all: &[bool], ordered_lds: bool) -
         }
     }
     same
+}
+
+/// Whether `v` is the same in every lane of its console wave in the
+/// surrounding control flow: constants, scalar reads, and lane operations
+/// whose inputs all are, through loop-carried phis. An LDS read at a
+/// uniform address counts only while no later LDS write can intervene:
+/// every lane asks for the same dword, but both halves must observe the
+/// same write (the shader uses this for a wave's running scan). Ported
+/// from uiliannn/VItoriaBr's `value_uniform` proof: it is what makes the
+/// ray-tracing builder's first-lane reads exact on 32-lane hosts, where
+/// `VICTORY_FIRSTLANE_OWN` was only an approximation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Uniform {
+    Yes,
+    No,
+    /// Only reachable through the value being checked (a loop back edge).
+    Cycle,
+}
+
+fn lds_stable(p: &Program, at: usize) -> bool {
+    p.blocks.iter().skip(at).all(|b| {
+        b.insts
+            .iter()
+            .all(|i| !i.name().starts_with("ds_") || i.name().starts_with("ds_read"))
+    })
+}
+
+fn operand_uniform(
+    p: &Program,
+    st: &Structured,
+    at: usize,
+    inst: &Inst,
+    op: &Operand,
+    path: &mut HashSet<Value>,
+) -> Uniform {
+    match *op {
+        Operand::Vector { reg, .. } => inst
+            .read(Reg::V(reg))
+            .map_or(Uniform::No, |x| value_uniform(p, st, at, x, path)),
+        Operand::Scalar { code, .. } => inst
+            .read(Reg::S(code))
+            .filter(|x| st.masks.contains_key(x) || st.highs.contains_key(x))
+            .map_or(Uniform::Yes, |_| Uniform::No),
+        _ => Uniform::Yes,
+    }
+}
+
+fn value_uniform(
+    p: &Program,
+    st: &Structured,
+    at: usize,
+    v: Value,
+    path: &mut HashSet<Value>,
+) -> Uniform {
+    if !path.insert(v) {
+        return Uniform::Cycle;
+    }
+    let mut result = Uniform::No;
+    'find: {
+        for block in &p.blocks {
+            for phi in &block.phis {
+                if phi.value != v {
+                    continue;
+                }
+                let (mut yes, mut cycle) = (false, false);
+                for &a in &phi.args {
+                    match value_uniform(p, st, at, a, path) {
+                        Uniform::No => {
+                            result = Uniform::No;
+                            break 'find;
+                        }
+                        Uniform::Yes => yes = true,
+                        Uniform::Cycle => cycle = true,
+                    }
+                }
+                // A loop's back edge alone is not a seed; at least one
+                // incoming value must come from outside the cycle.
+                result = if yes {
+                    Uniform::Yes
+                } else if cycle {
+                    Uniform::Cycle
+                } else {
+                    Uniform::Yes
+                };
+                break 'find;
+            }
+            for inst in &block.insts {
+                if !inst.writes.iter().any(|&(_, w)| w == v) {
+                    continue;
+                }
+                let name = inst.name();
+                if name.starts_with("ds_read") {
+                    if !lds_stable(p, at) {
+                        result = Uniform::No;
+                        break 'find;
+                    }
+                    let Fields::Ds { addr, .. } = &inst.fields else {
+                        result = Uniform::No;
+                        break 'find;
+                    };
+                    result = addr
+                        .as_ref()
+                        .map_or(Uniform::Yes, |a| operand_uniform(p, st, at, inst, a, path));
+                    break 'find;
+                }
+                if name.starts_with("v_mbcnt")
+                    || name.contains("lane")
+                    || name.starts_with("v_cmpx")
+                {
+                    result = Uniform::No;
+                    break 'find;
+                }
+                let Fields::Valu(val) = &inst.fields else {
+                    result = Uniform::No;
+                    break 'find;
+                };
+                if val.dpp.is_some() || val.sdwa.is_some() {
+                    result = Uniform::No;
+                    break 'find;
+                }
+                let mut yes = false;
+                let mut cycle = false;
+                for op in &val.src {
+                    match operand_uniform(p, st, at, inst, op, path) {
+                        Uniform::No => {
+                            result = Uniform::No;
+                            break 'find;
+                        }
+                        Uniform::Yes => yes = true,
+                        Uniform::Cycle => cycle = true,
+                    }
+                }
+                result = if yes {
+                    Uniform::Yes
+                } else if cycle {
+                    Uniform::Cycle
+                } else {
+                    Uniform::Yes
+                };
+                break 'find;
+            }
+        }
+    }
+    path.remove(&v);
+    result
 }
 
 /// What a register value holds, for [`wave_local`].
@@ -1566,6 +1737,7 @@ impl<'a> Lower<'a> {
             src0: None,
             console_lanes,
             split_lds,
+            page_there: None,
             lds_meet,
             local: exchange.is_some() && LOCAL_WAVES.get(),
             local_ok: false,
@@ -2218,8 +2390,32 @@ impl<'a> Lower<'a> {
         self.s.m.bin(c, Bin::Or, first, sum)
     }
 
-    fn run(mut self) -> Result<Lowered, Stop> {
+    fn run(mut self, counted: bool) -> Result<Lowered, Stop> {
         let p = self.x.p;
+        if counted {
+            // Before anything else, so that wave counts, reads of the first
+            // lane and stores know only the lanes that run.
+            let original = self.s.entry;
+            let width = self.s.threads.expect("compute thread count")[0];
+            let limit = self.host_word(RootType::Other(super::shader::USER_DISPATCH_THREADS_X), 0, width);
+            let Val::I32(group) = self.compute_id("groupId.i32", 94, 0) else {
+                unreachable!()
+            };
+            let Val::I32(thread) = self.thread_id(0) else {
+                unreachable!()
+            };
+            let width_v = self.s.m.i32(width);
+            let first = self.s.m.bin(original, Bin::Mul, group, width_v);
+            let x = self.s.m.bin(original, Bin::Add, first, thread);
+            let zero = self.s.m.i32(0);
+            let all = self.s.m.cmp(original, pred::EQ, limit, zero);
+            let inside = self.s.m.cmp(original, pred::IULT, x, limit);
+            let runs = self.s.m.bin(original, Bin::Or, all, inside);
+            let (body, done) = (self.s.m.new_block(), self.s.m.new_block());
+            self.s.m.terminate(original, Term::CondBr(runs, body, done));
+            self.s.m.terminate(done, Term::Ret);
+            self.s.entry = body;
+        }
         let order = crate::ir::reverse_postorder(&p.blocks);
         for (n, &b) in order.iter().enumerate() {
             self.rpo[b] = n;
@@ -2856,6 +3052,10 @@ impl<'a> Lower<'a> {
         // A page without a copy: its number, at a place by the number, or
         // at the sink for lanes that do not run and pages that have one.
         let zero = k(self, 0);
+        // For the BVH node test: whether this page has a host copy. A node in
+        // a page without one reads zeros — a child and a box that must not be
+        // taken as a hit (avatarmanz 810efe5 / DexNom bc3cd4b0).
+        self.page_there = Some(self.s.m.cmp(c, pred::NE, copy, zero));
         let mut missing = self.s.m.cmp(c, pred::EQ, copy, zero);
         if let Some(g) = guard {
             missing = self.s.m.bin(c, Bin::And, missing, g);
@@ -7647,24 +7847,71 @@ impl<'a> Lower<'a> {
                 let a = s(self, 0)?;
                 let (mine, any) = self.first_lane(a, guard);
                 // two host waves that exchange: the console's first lane may be in the other
-                // one, unless every lane holds the same value
+                // one, unless every lane holds the same value. `value_uniform` proves that
+                // through constants, scalar reads, phi loops and LDS reads at uniform
+                // addresses (a wave's running scan) — the ray-tracing builder's first-lane
+                // reads, which `self.uniform` alone did not recognise.
                 let alike = match v.src.first() {
-                    Some(&Operand::Vector { reg, .. }) => {
-                        inst.read(Reg::V(reg)).is_some_and(|x| self.uniform.contains(&x))
-                    }
+                    Some(&Operand::Vector { reg, .. }) => inst.read(Reg::V(reg)).is_some_and(|x| {
+                        self.uniform.contains(&x)
+                            || value_uniform(self.x.p, self.x.st, self.cur_ir, x, &mut HashSet::new())
+                                == Uniform::Yes
+                    }),
                     _ => true,
                 };
                 let halves = self.exchange.as_ref().is_some_and(|e| !e.1) && !self.local;
                 let r = if halves && !alike {
                     if !self.all_lanes(self.cur_ir) {
-                        // shortcut: `VICTORY_FIRSTLANE_OWN=1` takes the host wave's own
-                        // first lane, exact when the value is the same in every lane of
-                        // the console wave (the ray-tracing builder's scans read a sum of
-                        // scalars this way, inside a loop whose exit is per console wave).
+                        // `VICTORY_FIRSTLANE_OWN=why` names each shape that hits
+                        // this wall without changing translation: a live run
+                        // can then check whether the source really is the same
+                        // in every console lane. Pure diagnostics.
+                        if std::env::var("VICTORY_FIRSTLANE_OWN").is_ok_and(|v| v == "why") {
+                            let src = match v.src.first() {
+                                Some(&Operand::Vector { reg, .. }) => inst.read(Reg::V(reg)),
+                                _ => None,
+                            };
+                            // Name the instruction that defines the source, so a
+                            // live run can tell a first-lane broadcast (each
+                            // lane holds the same value) from a wave reduce.
+                            let def = src.and_then(|s| {
+                                self.x
+                                    .p
+                                    .blocks
+                                    .iter()
+                                    .flat_map(|b| &b.insts)
+                                    .find(|i| i.writes.iter().any(|w| w.1 == s))
+                                    .map(|i| i.name().to_string())
+                            });
+                            eprintln!(
+                                "FIRSTLANE-OWN block={} guard={} uniform={} def={:?} src={:?}",
+                                self.cur_ir,
+                                guard.is_some(),
+                                src.is_some_and(|x| self.uniform.contains(&x)),
+                                def,
+                                v.src.first()
+                            );
+                        }
+                        // `VICTORY_FIRSTLANE_OWN=1` takes this host wave's own
+                        // first lane. It is exact only when the source is the
+                        // same in every lane of the console wave. A live probe
+                        // (`=why`, 2026-11-26) showed the ray-tracing builder's
+                        // sources are mostly ordinary per-lane computations
+                        // (conversions, buffer/ds loads, selects), i.e. NOT
+                        // uniform — so this is an approximation, not a fixed
+                        // translation. Warn once when it is in use so a run
+                        // that relies on it cannot be mistaken for an exact
+                        // one. `=why` itself changes nothing.
                         static OWN: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
                         if *OWN.get_or_init(|| std::env::var_os("VICTORY_FIRSTLANE_OWN").is_some_and(|v| v == "1"))
                             || super::firstlane_own_here()
                         {
+                            static WARNED: std::sync::Once = std::sync::Once::new();
+                            WARNED.call_once(|| {
+                                eprintln!(
+                                    "VICTORY_FIRSTLANE_OWN=1: APPROXIMATE first-lane read — takes this host wave's lane, not the console's, when the source differs per lane. A live run building BVH with this on CRASHED the title (0xC0000005 on garbage bounding boxes, 2026-11-26). Safe only with VICTORY_BVH_QUARANTINE=1 (no BVH consumed). NEVER enable for normal play. See docs/wave64-builder-diagnosis.md"
+                                );
+                            });
                             return int(self, mine);
                         }
                         need(self.cur_ir);
