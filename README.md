@@ -35,6 +35,20 @@ runs on two tracks at once — getting the image right, and getting frames.
 
 ## Recent work
 
+### The title's idle threads no longer wait for free processors (from avatarmanz `0d065d3`)
+
+Six of the title's threads run at "idle", the streaming pager among them. On
+a PC those threads contend with other programs and our own workers, and a
+thread at "idle" ran about once in four seconds, stalling what waited for it
+(loading was seen 1.1 s late on average, 4.8 s worst). Our HLE `kernel32`
+now implements `SetThreadPriority` and lifts the title's two lowest priority
+classes ("idle" and "lowest") to "below normal"; higher priorities pass
+through unchanged. `VICTORY_TITLE_PRIORITIES=0` leaves them as the title set
+them. Ported from avatarmanz, the current fastest public fork (13-22 fps on
+an RX 7900 XTX by merging several VIctory forks). New HLE test
+`no_title_thread_waits_for_idle_processors` passes; full suite and release
+build clean. Its effect on our frame rate is not yet A/B'd.
+
 ### Card-copy compare hashes a piece with 64 threads (ported from victory-fork `5557224`)
 
 The compare of card-resident copies gave each 64 KiB piece one thread that

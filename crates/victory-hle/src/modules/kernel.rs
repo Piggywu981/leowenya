@@ -350,6 +350,31 @@ fn refuse(file: &str) {
 
 const ERROR_MOD_NOT_FOUND: u32 = 126;
 
+/// The title's thread priorities, but its lowest two become "below normal".
+/// Six of the title's threads run at "idle", the streaming pager among them;
+/// on a busy PC such a thread ran about once in four seconds, and the loading
+/// that waits for it with it (avatarmanz 0d065d3).
+/// `VICTORY_TITLE_PRIORITIES=0`: as the title sets them.
+fn title_priority(asked: i32) -> i32 {
+    const IDLE: i32 = -15;
+    const LOWEST: i32 = -2;
+    const BELOW_NORMAL: i32 = -1;
+    match asked {
+        IDLE..=LOWEST => BELOW_NORMAL,
+        other => other,
+    }
+}
+
+/// [`title_priority`], applied to the title's `SetThreadPriority` calls.
+#[cfg(windows)]
+pub extern "system" fn SetThreadPriority(thread: *mut c_void, priority: i32) -> i32 {
+    static AS_SET: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    let as_set = *AS_SET.get_or_init(|| std::env::var_os("VICTORY_TITLE_PRIORITIES").is_some_and(|v| v == "0"));
+    let priority = if as_set { priority } else { title_priority(priority) };
+    // SAFETY: the title passes a thread handle.
+    unsafe { windows_sys::Win32::System::Threading::SetThreadPriority(thread, priority) }
+}
+
 pub(crate) fn module() -> HleModule {
     HleModule {
         name: "kernel",
@@ -382,6 +407,8 @@ pub(crate) fn module() -> HleModule {
             hle_export!(_invalid_parameter_noinfo_noreturn),
             hle_export!(TerminateProcess),
             hle_export!(SetUnhandledExceptionFilter),
+            #[cfg(windows)]
+            hle_export!(SetThreadPriority),
         ],
     }
 }
@@ -595,6 +622,14 @@ mod host {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The title's idle and lowest threads run below normal; the others as
+    /// it sets them (avatarmanz 0d065d3).
+    #[test]
+    fn no_title_thread_waits_for_idle_processors() {
+        let given: Vec<i32> = [-15, -2, -1, 0, 1, 2, 15].into_iter().map(title_priority).collect();
+        assert_eq!(given, [-1, -1, -1, 0, 1, 2, 15]);
+    }
 
     #[test]
     fn title_images_report_their_original_path() {
