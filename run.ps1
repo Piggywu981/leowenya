@@ -9,6 +9,7 @@
 #   powershell -ExecutionPolicy Bypass -File run.ps1 -Window      # A/B: clamp indirect draws in windows
 #   powershell -ExecutionPolicy Bypass -File run.ps1 -Window -Gather  # A/B: also gather scattered records (needs -Window)
 #   powershell -ExecutionPolicy Bypass -File run.ps1 -NoTextureNoWait  # A/B: texture refresh waits for the title's remap
+#   powershell -ExecutionPolicy Bypass -File run.ps1 -HeapWorker    # A/B: texture uploads on their own thread (needs -LateWait/default tune)
 param(
   [switch]$Guide,
   [switch]$NoAmbient,
@@ -16,6 +17,7 @@ param(
   [switch]$NoMipSkip,
   [switch]$NoFetchInflight,
   [switch]$NoTextureNoWait,
+  [switch]$HeapWorker,
   [switch]$Window,
   [switch]$Gather,
   [string]$Game = 'G:\Leonida\GTA6.Xbox.v1.0.2.1-CYBERLEEK\game_scarlett_master.exe',
@@ -94,13 +96,21 @@ if (-not $NoTune) {
   } else {
     Remove-Item 'Env:VICTORY_INDIRECT_GATHER' -ErrorAction SilentlyContinue
   }
+  # Texture uploads on our own thread. Needs VICTORY_LATE_WAIT (set above),
+  # so it only takes effect with the default tune; upstream measured the boat
+  # mission 6.2-6.7 -> 8.65-9.53 fps on an RTX 4070. Off unless -HeapWorker.
+  if ($HeapWorker) {
+    $env:VICTORY_HEAP_WORKER = '1'
+  } else {
+    Remove-Item 'Env:VICTORY_HEAP_WORKER' -ErrorAction SilentlyContinue
+  }
 } else {
   foreach ($v in 'VICTORY_LEVELS_ON_DEMAND','VICTORY_RELAY','VICTORY_LATE_WAIT',
                 'VICTORY_WIDE_BACK','VICTORY_CARD_REHASH_RUNS','VICTORY_JOIN_COPIES',
                 'VICTORY_WIDE_REFRESH','VICTORY_WIDE_TEXTURES',
                 'VICTORY_TEXTURE_MIP_SKIP','VICTORY_TEXTURE_MIP_SKIP_MIN',
                 'VICTORY_CARD_FETCH_INFLIGHT','VICTORY_INDIRECT_WINDOW','VICTORY_INDIRECT_GATHER',
-                'VICTORY_TEXTURE_NO_WAIT') {
+                'VICTORY_TEXTURE_NO_WAIT','VICTORY_HEAP_WORKER') {
     Remove-Item "Env:$v" -ErrorAction SilentlyContinue
   }
 }
@@ -119,7 +129,8 @@ $winOn = ($Window -or $Gather) -and -not $NoTune
 $fetchOn = -not $NoTune -and -not $NoFetchInflight -and -not $winOn
 $gatherOn = $Gather -and -not $NoTune
 $noWaitOn = -not $NoTune -and -not $NoTextureNoWait
-Write-Host "Launching $exe with AMBIENT=$(if($NoAmbient){'off'}else{'0.6'}), TUNE=$(-not $NoTune), WINDOW=$winOn, GATHER=$gatherOn, FETCH=$fetchOn, NOWAIT=$noWaitOn, GUIDE=$Guide"
+$heapOn = $HeapWorker -and -not $NoTune
+Write-Host "Launching $exe with AMBIENT=$(if($NoAmbient){'off'}else{'0.6'}), TUNE=$(-not $NoTune), WINDOW=$winOn, GATHER=$gatherOn, FETCH=$fetchOn, NOWAIT=$noWaitOn, HEAPWK=$heapOn, GUIDE=$Guide"
 Write-Host "Log: $log"
 & $exe run $Game --unimplemented zero --execute 2>&1 | Tee-Object -FilePath $log
 Write-Host "Exited with $LASTEXITCODE"
