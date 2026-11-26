@@ -1,0 +1,22 @@
+﻿{
+    "log":  "G:\\Leonida\\_port\\run-lowering-after.log",
+    "hostWaveMin":  "32",
+    "hostWaveMax":  "32",
+    "refusedCount":  0,
+    "refused":  [
+
+                ],
+    "notTranslatedCount":  4,
+    "notTranslated":  [
+                          "2da4beb386509b77",
+                          "02384a60fda6f2d0",
+                          "6b82bc7d22016cb5",
+                          "f133e35efed2a48a"
+                      ],
+    "dropSummaryCount":  1,
+    "topDropReasons":  [
+                           "970.1/frame a stage of the ray-tr acing structure builder, which is off 2026-11-26"
+                       ],
+    "peakDroppedPerFrame":  3960,
+    "peakDrawsPerFrame":  5315
+}

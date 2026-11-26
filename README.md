@@ -35,6 +35,33 @@ runs on two tracks at once — getting the image right, and getting frames.
 
 ## Recent work
 
+### Wave64 → wave32 lowering for NVIDIA (coolfox `8cc31ab` + ccs03 `980a273`)
+
+The console's 64-lane shaders used to be handed to our 32-lane RTX as 64-lane
+PSOs, which D3D12 refuses with `0x80070057`; their draws were dropped. Two
+ports fix that. `8cc31ab` makes the emitter lower certain wave64 shapes to
+32 lanes correctly (ordered-LDS uniformity, restored constant VGPR lanes,
+a driver active-lane loop, per-lane masks named distinctly), and adds a
+safety gate that refuses to emit a 64-lane PSO on a 32-lane host.
+`980a273` lets specific programs take the wave-wide form or the host wave's
+own first lane, chosen by container hash (four wave-wide hashes and six
+builder first-lane hashes by default, overridable with
+`VICTORY_WAVE_WIDE_ONLY` / `VICTORY_FIRSTLANE_OWN_ONLY`); those two variables
+are folded into the shader-cache key so a changed list cannot reuse old
+translations. The builder's "stays off" warning now names the programs that
+are still missing.
+
+**Verified on our RTX 5070 Laptop 8 GB (diag build, same world scene, 20
+stable frames), with `tools/wave64-observe.ps1`:** programs refused with
+`0x80070057` went **7 → 0**; programs that do not translate went **1 → 4**
+(the three that still need a lowering — `2da4beb3`, `02384a60`, `6b82bc7d`
+— are now refused by our own gate rather than sent as bad PSOs, plus the
+lane-mask program `f133e35e`); draws dropped per frame in the stable world
+went **1872 → 384 median**. Frame time did not improve (2027 → 2119 ms,
+within noise): the ray-tracing builder is still off until its remaining
+programs run correctly, so the returned draws do not yet change the picture.
+Enabling `VICTORY_BVH_BUILDER=1` is a separate BVH-correctness line.
+
 ### Textures picked by index upload on a thread of their own (victory-fork `d4a528b`)
 
 The pass that brings textures sampled by index up to date used to run on the
