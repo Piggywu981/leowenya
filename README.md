@@ -35,7 +35,7 @@ runs on two tracks at once — getting the image right, and getting frames.
 
 ## Recent work
 
-### Wave64 → wave32 lowering for NVIDIA (coolfox `8cc31ab` + ccs03 `980a273`)
+### Wave64 → wave32 lowering for NVIDIA (coolfox `8cc31ab` + ccs03 `980a273` + `f4b48ad`)
 
 The console's 64-lane shaders used to be handed to our 32-lane RTX as 64-lane
 PSOs, which D3D12 refuses with `0x80070057`; their draws were dropped. Two
@@ -44,12 +44,15 @@ ports fix that. `8cc31ab` makes the emitter lower certain wave64 shapes to
 a driver active-lane loop, per-lane masks named distinctly), and adds a
 safety gate that refuses to emit a 64-lane PSO on a 32-lane host.
 `980a273` lets specific programs take the wave-wide form or the host wave's
-own first lane, chosen by container hash (four wave-wide hashes and six
+own first lane, chosen by container hash (six wave-wide hashes and six
 builder first-lane hashes by default, overridable with
 `VICTORY_WAVE_WIDE_ONLY` / `VICTORY_FIRSTLANE_OWN_ONLY`); those two variables
 are folded into the shader-cache key so a changed list cannot reuse old
 translations. The builder's "stays off" warning now names the programs that
-are still missing.
+are still missing. `f4b48ad` makes a descriptor read at a join consider the
+EXEC guard of the accessing instruction, so the immediate sampler of a
+guarded path resolves from the live arm (fixes the transmission-prefilter
+program `2da4beb3`).
 
 **Verified on our RTX 5070 Laptop 8 GB (diag build, same world scene, 20
 stable frames), with `tools/wave64-observe.ps1`:** programs refused with
@@ -57,10 +60,16 @@ stable frames), with `tools/wave64-observe.ps1`:** programs refused with
 (the three that still need a lowering — `2da4beb3`, `02384a60`, `6b82bc7d`
 — are now refused by our own gate rather than sent as bad PSOs, plus the
 lane-mask program `f133e35e`); draws dropped per frame in the stable world
-went **1872 → 384 median**. Frame time did not improve (2027 → 2119 ms,
-within noise): the ray-tracing builder is still off until its remaining
-programs run correctly, so the returned draws do not yet change the picture.
-Enabling `VICTORY_BVH_BUILDER=1` is a separate BVH-correctness line.
+went **1872 → 384 median**. After `f4b48ad` the programs that do not translate
+went **4 → 3** (`2da4beb3` now translates and gets a host pipeline, so its
+transmission draws come back — a picture fix rather than a frame-rate one);
+stable-world dropped draws stayed at ~388 median and frame time at ~2204 ms
+(both within noise). The remaining three (`02384a60`, `6b82bc7d`, `f133e35e`)
+have no published lowering yet. Frame time never improved across these steps
+(2027 → 2119 → 2204 ms, all within noise): the ray-tracing builder is still
+off until its remaining programs run correctly, so the returned draws do not
+yet change the frame rate. Enabling `VICTORY_BVH_BUILDER=1` is a separate
+BVH-correctness line.
 
 ### Textures picked by index upload on a thread of their own (victory-fork `d4a528b`)
 
