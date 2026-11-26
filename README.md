@@ -48,7 +48,14 @@ from that work are now ported:
   + `shader.rs`, avatarmanz `0dc5d1b`, upstream `13091f6e`): undecided float
   elements take the row's agreed mode, as the console signature packed them.
 New test `a_row_keeps_one_interpolation_mode` passes; full suite and release
-build clean. The translation success count after these is not yet measured.
+build clean. A full `translate --list` run over `shaders.rpf` measured
+**26,084 of 26,084 programs translating to IR** (25,889 with resources
+tracked), with DXIL emitted for 14,199/14,247 vertex-pixel, 2,675/2,682
+compute and 8,762/8,765 mesh programs. The 195 failures to track resources
+are the unused geometry shaders; the ~58 that translate but emit no DXIL are
+the `descriptor chosen by control flow` / `read only as data` cases. So world
+draws dropped for want of a host pipeline are a pipeline-creation/refusal
+matter, not missing shader translation.
 
 ### Reflections are held to the ambient light (belobug `c3bd561`)
 
