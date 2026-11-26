@@ -35,6 +35,34 @@ runs on two tracks at once — getting the image right, and getting frames.
 
 ## Recent work
 
+### Card-copy compare hashes a piece with 64 threads (ported from victory-fork `5557224`)
+
+The compare of card-resident copies gave each 64 KiB piece one thread that
+walked it 16 bytes at a time — 4,096 sequential loads — so a pass cost the
+time of one piece however few pieces it had, and there are 300-450 hash
+passes and ~100 compare passes a frame. Now thread `t` hashes the steps
+`t, t + 64, ...` and lane 0 folds the 64 lane hashes in lane order. On by
+default (`VICTORY_CARD_HASH_WIDE=0` restores the old form); stored and
+compared hashes use the same form within a process. victory-fork measured
+its own card passes falling from 22-29 ms to 5-9 ms a frame on an RTX 3060.
+Ported into `host.rs` (`CARD_COMPARE_WIDE`, `card_hash_wide`,
+`card_compare_source`, `card_compare_groups` and three call sites). New WARP
+test `warp_card_compare_finds_every_byte_with_skew` checks every one-byte
+change at skewed offsets in both forms; full suite and release build pass.
+
+### Where the world frame actually goes (measured, not yet fixed)
+
+With a correctly built diag binary and no scripted keys, the 3D world is
+reached and its steady frames were measured from the log's fps/ms line:
+**0.2-0.7 fps (1.5-4.5 s/frame)** — far worse than the earlier cutscene-only
+estimate of 2-4 fps. The frame is now **GPU bound**: `on the GPU` is
+1009-2787 ms with the card ~79% busy, while `preparing` is ~120-520 ms and
+`copying back` ~30-705 ms. Between 400 and 4,800 draws a frame are dropped
+for want of a host pipeline. This means the window/gather work (which cuts
+the per-record clamp) helps only at full draw counts, and `INPLACE` (which
+cuts a host-side read) is not the bottleneck here. The next target is the
+GPU time itself; a per-pipeline GPU timing pass is the next diagnostic.
+
 ### Indirect light now follows the sky (ported from belobug `4f62c2a`)
 
 The fixed ambient level was the cause of the overexposed picture: the same
