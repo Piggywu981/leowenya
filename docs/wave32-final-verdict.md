@@ -65,6 +65,16 @@ copyable implementation.
   nodes). Even the leading fork (coolfox) marks dynamic-structure overlap as an open
   gap. Ambient sky-following light is the production substitute: outdoor picture is
   good, interior bounce light remains the known gap.
+- **Ambient tuning cannot fix interior readability** (live A/B, `run-ambient-ab.log`,
+  2026-11-27): same indoor window scene, `VICTORY_AMBIENT_FILE` hot-tune. Raising
+  `least` 0.05→0.12→0.2 changed almost nothing (least is not the limiter); `gain`
+  0.36→0.7 brightened hair slightly but the face stayed an unreadable backlit
+  silhouette; the best combo (0.6/0.15/0.3) was only marginal and did not overexpose
+  outdoors. Interior light comes from direct/ray-traced bounce (the builder), of which
+  ambient's sky-mean is only an approximation. Default stays 0.36/0.05/0.4 — the
+  marginal gain is not worth unbalancing other hours. Stripe artifacts are unrelated
+  to ambient (unchanged across all settings). Interior "good picture" is archived as
+  a builder-dependent, hardware-limited gap.
 
 ## Bottom line
 
