@@ -35,6 +35,18 @@ runs on two tracks at once — getting the image right, and getting frames.
 
 ## Recent work
 
+### Reflections are held to the ambient light (belobug `c3bd561`)
+
+The last write of the title's reflections in a frame (`CS_UpdateHistory`)
+is now held to a part of the surrounding ambient light, so a mirror surface
+with no rays (still water) gets the sky's light instead of going black.
+The `ambient::hold` pass and its `REFLECTED`/`REFLECTIONS` hooks came in with
+the sky-following port but were not wired; this connects them: a
+`ends_reflections` flag on shaders (`pipeline.rs`) and a branch in
+`State::ambient` (`draw.rs`) that holds the reflection UAV. Part of the light
+around, default 0.5 (`VICTORY_AMBIENT_REFLECT`, `0` off). Full suite and
+release build pass. The live picture with this on is not yet verified.
+
 ### Dynamic descriptor slots: find a free run across the search's start (victory-fork `4d0c634`)
 
 The search for `n` free dynamic slots went from its starting place to the end
