@@ -35,6 +35,26 @@ runs on two tracks at once — getting the image right, and getting frames.
 
 ## Recent work
 
+### Textures picked by index upload on a thread of their own (victory-fork `d4a528b`)
+
+The pass that brings textures sampled by index up to date used to run on the
+title's recording thread, inside its slice of each frame. It now runs on our
+own thread (`victory-gpu/src/heap_worker.rs`, `VICTORY_HEAP_WORKER=1`, off by
+default; needs `VICTORY_LATE_WAIT`, which `run.ps1` already sets to `3`). The
+worker records its uploads into lists of ours that run ahead of the title's
+lists at submission, and a host slot is given its view only then
+(`HostHeap::publish`), so a shader never sees a texture before its contents
+are queued. A slot the title rewrote meanwhile is left to its own turn. Work
+that a decoration bake needs still runs on the recording thread, for which the
+worker makes way (`VICTORY_BAKE_TEXTURES_MS`). Upstream measured the boat
+mission at 6.2-6.7 world frames/s without it and 8.65-9.53 with it on an RTX
+4070 12 GB. Ported with the local heap-pass and texture-no-wait changes kept
+intact; `cargo check --profile diag -p victory --features diagnostics` is clean.
+**The +40% is upstream's measurement on another card; our own A/B on the RTX
+5070 Laptop 8 GB has not run yet.** To try it, set `VICTORY_HEAP_WORKER=1`;
+the frame line reports the worker's own work and publishes per frame under
+diagnostics.
+
 ### Two shader-translation fixes toward translating every used shader (avatarmanz)
 
 avatarmanz reached 25,790 of 25,985 shaders translating (the 195 left are
