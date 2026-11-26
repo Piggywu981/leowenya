@@ -38,7 +38,7 @@ runs on two tracks at once — getting the image right, and getting frames.
 ### Wave64 → wave32 lowering for NVIDIA (coolfox `8cc31ab` + ccs03 `980a273` + `f4b48ad`)
 
 The console's 64-lane shaders used to be handed to our 32-lane RTX as 64-lane
-PSOs, which D3D12 refuses with `0x80070057`; their draws were dropped. Two
+PSOs, which D3D12 refuses with `0x80070057`; their draws were dropped. Three
 ports fix that. `8cc31ab` makes the emitter lower certain wave64 shapes to
 32 lanes correctly (ordered-LDS uniformity, restored constant VGPR lanes,
 a driver active-lane loop, per-lane masks named distinctly), and adds a
