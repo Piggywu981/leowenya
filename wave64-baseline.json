@@ -1,0 +1,25 @@
+﻿{
+    "log":  "G:\\Leonida\\_port\\run.log",
+    "hostWaveMin":  "32",
+    "hostWaveMax":  "32",
+    "refusedCount":  7,
+    "refused":  [
+                    "compute 02384a60fda6f2d0 [参数错误。]",
+                    "compute 2cc4c197ee29e291 [参数错误。]",
+                    "compute 2da4beb386509b77 [参数错误。]",
+                    "compute 369cbe906ea72764 [参数错误。]",
+                    "compute 5dc3b25986622949 [参数错误。]",
+                    "compute 6b82bc7d22016cb5 [参数错误。]",
+                    "compute 6f225b641c5b0708 [参数错误。]"
+                ],
+    "notTranslatedCount":  1,
+    "notTranslated":  [
+                          "f133e35efed2a48a"
+                      ],
+    "dropSummaryCount":  1,
+    "topDropReasons":  [
+                           "1870.7/frame a stage of the ray-t racing structure builder, which is off 2026-11-26"
+                       ],
+    "peakDroppedPerFrame":  1872,
+    "peakDrawsPerFrame":  9892
+}
