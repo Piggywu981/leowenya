@@ -468,6 +468,11 @@ pub fn emit(
         // `Container::digest` this tree does not keep; the explicit switch
         // and the driver_loop route below cover the wave64 programs here.)
         let wide_on = wide_option.as_ref().is_some_and(|v| v == "1") || WAVE_WIDE_HERE.get();
+        // `VICTORY_WAVE_WIDE=last`: the same barrier form, but only as a last
+        // resort for programs every other form leaves at 64 lanes (on a
+        // 32-lane host those are refused outright), so programs the
+        // approximate forms already take keep their barrier-free form.
+        let wide_last = wide_option.as_ref().is_some_and(|v| v == "last");
         // A single guest wave can iterate an active-lane loop until both host
         // halves have finished. The precise latch and convergence conditions
         // for the driver compute route are checked by widen().
@@ -554,6 +559,23 @@ pub fn emit(
                 report("local waves (APPROXIMATE, any mask)", &local);
                 if done(&local) {
                     return local.map(|(shader, _)| shader);
+                }
+            }
+        }
+        if wide_last {
+            let deep_on = std::env::var_os("VICTORY_WAVE_DEEP_SKIPS").is_none_or(|v| v != "0");
+            let deep = if deep_on { form(ir::without_skips(p, true)) } else { None };
+            let bases = [
+                deep.as_ref().map(|f| &f.0),
+                forms[1].1.as_ref().map(|f| &f.0),
+                forms[0].1.as_ref().map(|f| &f.0),
+                Some(p),
+            ];
+            if let Some(base) = bases.into_iter().flatten().next() {
+                let again = widen(c, native, base, why, false);
+                report("wave-wide branches (last)", &again);
+                if done(&again) {
+                    return again.map(|(shader, _)| shader);
                 }
             }
         }
