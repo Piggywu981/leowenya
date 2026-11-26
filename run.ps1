@@ -132,5 +132,15 @@ $noWaitOn = -not $NoTune -and -not $NoTextureNoWait
 $heapOn = $HeapWorker -and -not $NoTune
 Write-Host "Launching $exe with AMBIENT=$(if($NoAmbient){'off'}else{'0.6'}), TUNE=$(-not $NoTune), WINDOW=$winOn, GATHER=$gatherOn, FETCH=$fetchOn, NOWAIT=$noWaitOn, HEAPWK=$heapOn, GUIDE=$Guide"
 Write-Host "Log: $log"
-& $exe run $Game --unimplemented zero --execute 2>&1 | Tee-Object -FilePath $log
+# victory writes its tracing/RUST_LOG to stderr. With $ErrorActionPreference='Stop'
+# PowerShell treats the first INFO line as a terminating NativeCommandError and
+# kills the game (the log stops at the title patches, no crash). Keep 'Stop' for
+# our own setup above, but let the child's stderr stream through as text here.
+$savedEap = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+try {
+  & $exe run $Game --unimplemented zero --execute 2>&1 | Tee-Object -FilePath $log
+} finally {
+  $ErrorActionPreference = $savedEap
+}
 Write-Host "Exited with $LASTEXITCODE"
