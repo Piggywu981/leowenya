@@ -45,7 +45,11 @@ the sky-following port but were not wired; this connects them: a
 `ends_reflections` flag on shaders (`pipeline.rs`) and a branch in
 `State::ambient` (`draw.rs`) that holds the reflection UAV. Part of the light
 around, default 0.5 (`VICTORY_AMBIENT_REFLECT`, `0` off). Full suite and
-release build pass. The live picture with this on is not yet verified.
+release build pass. A live run confirmed the picture: the 3D world (a prison
+yard at sunset) renders with correct sky-following light, rim-lit hair,
+glass reflections, readable shadows and no blowout. The `CS_UpdateHistory`
+reflection program did not fire in the scenes captured, so the reflection
+branch itself was not observed live (it is exercised in unit builds).
 
 ### Dynamic descriptor slots: find a free run across the search's start (victory-fork `4d0c634`)
 
