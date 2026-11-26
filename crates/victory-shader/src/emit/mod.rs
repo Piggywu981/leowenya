@@ -317,6 +317,7 @@ fn translate_plain(container: &[u8]) -> Result<HostShader, ShaderError> {
     let c = Container::parse(container)?;
     let dxil = c
         .part(FourCC::DXIL)
+        .or(c.part(FourCC::ACCC))
         .ok_or(ShaderError::Malformed("no DXIL part"))?;
     let native = crate::native_programs(dxil.data)?
         .into_iter()
@@ -338,6 +339,46 @@ fn translate_plain(container: &[u8]) -> Result<HostShader, ShaderError> {
     let io = io::raise(&p, &native)?;
     let st = st?;
     emit(&c, &native, &p, &st, &io, &res)
+}
+
+thread_local! {
+    /// [`with_wave_wide`]'s choice, for this thread's translations.
+    static WAVE_WIDE_HERE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Runs `f` (a translation) with the wave-wide form of a wave64 compute
+/// program on a host of 32-lane waves allowed, as `VICTORY_WAVE_WIDE=1`
+/// allows it for all: for programs known to come out of it right, while
+/// others stay off it (two programs that moved to it lost the card, runs
+/// 121-124). The form is still tried only after the exact ones, so a
+/// program that has one keeps it.
+pub fn with_wave_wide<R>(on: bool, f: impl FnOnce() -> R) -> R {
+    let before = WAVE_WIDE_HERE.replace(on);
+    let out = f();
+    WAVE_WIDE_HERE.set(before);
+    out
+}
+
+thread_local! {
+    /// [`with_firstlane_own`]'s choice, for this thread's translations.
+    static FIRSTLANE_OWN_HERE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Runs `f` (a translation) with a first-lane read where not every lane runs
+/// taken from the host wave's own first lane, as `VICTORY_FIRSTLANE_OWN=1`
+/// takes it for all: exact where the value is the same in every lane of the
+/// console wave, which holds for the programs it is asked for (the
+/// ray-tracing structure builder's scans, which read a sum of scalars).
+pub fn with_firstlane_own<R>(on: bool, f: impl FnOnce() -> R) -> R {
+    let before = FIRSTLANE_OWN_HERE.replace(on);
+    let out = f();
+    FIRSTLANE_OWN_HERE.set(before);
+    out
+}
+
+/// Whether [`with_firstlane_own`] asked for it on this thread.
+pub(super) fn firstlane_own_here() -> bool {
+    FIRSTLANE_OWN_HERE.get()
 }
 
 /// Emits a program whose earlier stages already ran.
@@ -426,7 +467,7 @@ pub fn emit(
         // (scene_kernel's two digest exceptions from the port need a
         // `Container::digest` this tree does not keep; the explicit switch
         // and the driver_loop route below cover the wave64 programs here.)
-        let wide_on = wide_option.as_ref().is_some_and(|v| v == "1");
+        let wide_on = wide_option.as_ref().is_some_and(|v| v == "1") || WAVE_WIDE_HERE.get();
         // A single guest wave can iterate an active-lane loop until both host
         // halves have finished. The precise latch and convergence conditions
         // for the driver compute route are checked by widen().
