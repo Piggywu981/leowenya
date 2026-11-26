@@ -443,3 +443,24 @@ half-float ±Inf sentinel of bad BVH node data, and no missing-page access.
 So lowering is fixed enough to restore the builder's pipelines, but the BVH
 data correctness gap (thread-dimensions / node bounds, above) is what now
 blocks a lit world. `VICTORY_BVH_BUILDER=1` stays unsafe for normal play.
+
+### P1: coolfox `f4b48ad` guard fix (2026-11-26)
+
+`2da4beb3` was the one remaining hash with a known fix: coolfox `f4b48ad`
+changed `resource.rs` so an access's known-lane set includes the EXEC guard at
+its exact instruction site, not just the block's reach. Ported verbatim:
+`Tracer.at` became a `Site` set per instruction, `descriptor()` and `live()`
+add `lanes.guards[site]` to `known`, and the
+`a_guarded_access_excludes_dead_lane_edges_at_a_join` test was added (unit
+tests 213 -> 214 passed, same 4 pre-existing failures).
+
+Live (exe 20:48:30, `p1_run.log`, default switches): `notTranslated` dropped
+`4 -> 3` by hand count. `2da4beb3` now logs `shader translated`, a built host
+pipeline, and `first bind ... frame=2173` — it draws instead of being dropped.
+The stable-stage drop list is down to `02384a60` and `f133e35e` at ~1/frame
+each (plus the builder-off stage, since this run left `VICTORY_BVH_BUILDER`
+unset). Remaining non-translating hashes: `f133e35e`, `6b82bc7d`, `02384a60`
+— none has a published fix; `6b82bc7d`/`02384a60` are the two the digest-based
+scene_kernel exception might cover (needs `Container::digest`, P3), and
+`f133e35e` needs a DXIL-container route for the divergent-mask exchange (the
+ACCC `driver_loop` does not fire for it).
