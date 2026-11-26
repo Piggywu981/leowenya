@@ -71,6 +71,13 @@ off until its remaining programs run correctly, so the returned draws do not
 yet change the frame rate. Enabling `VICTORY_BVH_BUILDER=1` is a separate
 BVH-correctness line.
 
+The two remaining compute hashes `02384a60` and `6b82bc7d` still say "no
+wave32 lowering" here. We tried coolfox's two `scene_kernel` container-digest
+exceptions (which default those kernels onto the wave-wide form) and measured
+on the card: no change (still three programs that do not translate, no TDR),
+so those digests are not these two programs and the exceptions were reverted.
+They need a different lowering, not a whitelist entry.
+
 ### Textures picked by index upload on a thread of their own (victory-fork `d4a528b`)
 
 The pass that brings textures sampled by index up to date used to run on the
