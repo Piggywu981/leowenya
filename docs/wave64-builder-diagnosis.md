@@ -392,3 +392,54 @@ child addresses. This points at the remaining gaps from `fork-ray-tracing.md`:
 runs up to 64x its threads and stores over later structures — **not present in
 this worktree** and a direct cause of corrupted bounds; and (b) the wide-node
 bounds interpretation. Next: port the thread-dimensions fix and re-validate.
+
+## Wave32 lowering: 8cc31ab then ccs03 980a273 (2026-11-26)
+
+The highest priority moved to wave64 -> wave32 lowering: on this 32-lane RTX
+host, seven compute programs were refused by D3D12 with `0x80070057` because
+their DXIL still asked for `WaveSize(64)`, and a further one (`f133e35e`) did
+not translate. Those refusals drop ~1870 draws/frame in the world.
+
+**Ported coolfox `8cc31ab`** (victory-shader only): `DIVERGENT_MASK_EXCHANGE`,
+`lane_uniform(..., ordered_lds)` with uniform-address `ds_read_b32`,
+`reads_mask_as_data`/`scc_in` SCC handling, `restored_lanes` (resource.rs), and
+the `supported()` gate in emit/mod.rs that refuses a wave==Some(64) result on a
+32-lane host instead of handing a doomed WaveSize(64) PSO to the driver. Also
+added `FourCC::ACCC` and the ACCC translate path so the `driver_loop` route is
+meaningful. The digest-based scene_kernel exception was skipped: this tree's
+`Container` does not keep `digest`.
+
+Live result of 8cc31ab alone (exe 20:21:06, `wave32_run.log`): refused
+`7 -> 0` — but the seven hashes merely became `does not translate: no wave32
+lowering for this wave64 program`. They were still unusable; draw loss was
+unchanged (`peakDrop ~12482`). `driver_loop` did not fire for `f133e35e`
+because that container is DXIL, not ACCC. So the lowering core only changed
+the shape of the refusal.
+
+**Ported ccs03 `980a273`** (the missing piece): per-program, by container hash,
+`with_wave_wide` / `with_firstlane_own` (thread-local, wrapped around
+`emit::translate` in `translate_listed`); `warm`/`host_shader` use it; the two
+`*_ONLY` environment lists are folded into the shader cache key (no stale
+cross-talk). Hash tables are ccs03 HEAD's 6-entry versions. The `unmade` reason
+log was already covered here by the more detailed `?why` (`make::missing`),
+so it was not duplicated. The first-lane gate adds `firstlane_own_here()` as a
+fallback after this tree's `value_uniform` proof.
+
+Live result of 980a273 (exe 20:32:20, `p0_run.log`): `notTranslated` dropped
+`8 -> 4` by hand count. The four WAVE_WIDE_DEFAULT programs
+(`5dc3b259`, `6f225b64`, `369cbe90`, `2cc4c197`) now translate to wave32 and
+disappear from the drop list; stable-world builder-off drop fell from ~1872
+to ~414. Remaining non-translating hashes: `02384a60`, `6b82bc7d` (no known
+fix in any peer), `2da4beb3` (coolfox `f4b48ad` guard fix, P1), `f133e35e`.
+Note: `wave64-observe.ps1` mis-parses `notTranslated` on this tree's log
+(it reads the hash from the next line; here `hash=... error=...` is one line),
+so counts were taken by hand.
+
+With `VICTORY_BVH_BUILDER=1` (non-quarantined, `p0_builder_run.log`): builder
+genuinely started (`pipelines=53`, 20:39:55) then crashed `0xC0000005` at
+20:40:05 (~10 s later, exit -1073741819). Bad-value census this run:
+`0x7c007c00` x8, `0xfc00fc00` x2, no 32-bit-float infinities — still the
+half-float ±Inf sentinel of bad BVH node data, and no missing-page access.
+So lowering is fixed enough to restore the builder's pipelines, but the BVH
+data correctness gap (thread-dimensions / node bounds, above) is what now
+blocks a lit world. `VICTORY_BVH_BUILDER=1` stays unsafe for normal play.
