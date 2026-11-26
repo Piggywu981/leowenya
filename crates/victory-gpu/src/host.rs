@@ -5,7 +5,7 @@
 //! (unless `VICTORY_LATE_WAIT=1`, see [`late`]);
 //! overlap them with per-submission fences once more than clears run.
 
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 use windows::Win32::Foundation::{HANDLE, HWND, LPARAM, LRESULT, RECT, WPARAM};
@@ -2891,6 +2891,21 @@ fn late_line(frames: f64) {
         s[13],
         s[14],
     );
+    {
+        static SEEN: [AtomicU64; 2] = [const { AtomicU64::new(0) }; 2];
+        let [direct, filled] = [0, 1].map(|i| {
+            let now = crate::draw::CONSTANT_VIEWS[i].load(Ordering::Relaxed);
+            now - SEEN[i].swap(now, Ordering::Relaxed)
+        });
+        if direct + filled > 0 {
+            tracing::info!(
+                "table constant views per frame: {:.1} read on the title memory's host copy, {:.1} filled into upload memory \
+                 (VICTORY_DIRECT_CONSTANTS=0: all filled)",
+                direct as f64 / frames,
+                filled as f64 / frames
+            );
+        }
+    }
     {
         let w: Vec<f64> = LATE_WAITED.iter().map(|w| w.swap(0, Ordering::Relaxed) as f64 / 1000.0 / frames).collect();
         tracing::info!(

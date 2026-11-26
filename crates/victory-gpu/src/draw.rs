@@ -481,6 +481,52 @@ pub(crate) fn dispatched() -> u64 {
     DISPATCHED.load(Ordering::Relaxed)
 }
 
+/// Constant views of descriptor tables: bound straight on the title
+/// memory's host copy, and those copied into upload memory at submission
+/// (a fill), since the start. [direct, filled].
+pub(crate) static CONSTANT_VIEWS: [AtomicU64; 2] = [const { AtomicU64::new(0) }; 2];
+
+/// Whether a table's constant view is bound on the host copy of the title
+/// memory it names (`VICTORY_DIRECT_CONSTANTS=0`: copied into upload memory
+/// at submission, as before).
+///
+/// A fill read the constants from title memory on the CPU when the list was
+/// submitted. In the world the title's compute passes write constants that
+/// later draws read, so every fill under a flight waited for the card to run
+/// all it had — the submitting thread's wall-clock wait. Bound on the copy,
+/// the view reads what the copy holds when the draw runs, in the queue's
+/// order, with nothing to wait for (kelvaroq 0038).
+fn direct_constants() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("VICTORY_DIRECT_CONSTANTS").is_none_or(|v| v != "0"))
+}
+
+/// The host GPU address a table's constant view of `size` bytes at title
+/// address `address` reads on the title memory's host copy, with the range
+/// refreshed before the list runs; `None`: it is filled ([`direct_constants`]).
+fn direct_constant(list: &HostList, address: u64, size: u32) -> Option<u64> {
+    let counted = |direct: bool| {
+        CONSTANT_VIEWS[usize::from(!direct)].fetch_add(1, Ordering::Relaxed);
+    };
+    if !direct_constants() || size == 0 || size > 1 << 16 {
+        counted(false);
+        return None;
+    }
+    let Some(shadow) = crate::shadow::find(address, u64::from(size)) else {
+        counted(false);
+        return None;
+    };
+    let gpu = shadow.gpu(address);
+    let rounded = u64::from(size.next_multiple_of(256));
+    if !gpu.is_multiple_of(256) || shadow.left(address) < rounded {
+        counted(false);
+        return None;
+    }
+    shadow.refresh(list, address, rounded);
+    counted(true);
+    Some(gpu)
+}
+
 /// The host address of a root view: its buffer's host copy, or for a
 /// constant buffer not 256-byte aligned there (the console needs 16) a
 /// copy in upload memory.
@@ -2788,6 +2834,12 @@ impl State {
                 let used = entries.iter().find(|u| u.table_offset_dwords / 8 == k);
                 match crate::descriptor::view(table + u64::from(k) * 32) {
                     Some(View::Constant(address, size)) => {
+                        // On the GPU's copy of the title memory, read when the
+                        // draw runs, in the queue's order (kelvaroq 0038).
+                        if let Some(gpu) = direct_constant(list, address, size) {
+                            host.constant_at(index, gpu, size);
+                            continue;
+                        }
                         let Some((gpu, to)) = list.scratch(u64::from(size)) else {
                             host.make_null(index);
                             continue;
