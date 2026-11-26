@@ -464,3 +464,39 @@ unset). Remaining non-translating hashes: `f133e35e`, `6b82bc7d`, `02384a60`
 scene_kernel exception might cover (needs `Container::digest`, P3), and
 `f133e35e` needs a DXIL-container route for the divergent-mask exchange (the
 ACCC `driver_loop` does not fire for it).
+
+### thread-dimensions counted dispatch: half-float sentinel gone, NONE remains (2026-11-26)
+
+Ported avatarmanz `810efe5` / DexNom `bc3cd4b0`'s counted-in-threads fix:
+`DispatchX` flag `0x20` means X/Y/Z are thread counts, not group counts. The
+host converts them to `div_ceil(threads, group_width)` real groups and writes
+the last group's live-thread count into a host-computed user-data word
+(`USER_DISPATCH_THREADS_X = 0x106`). In the lowering, `counted_in_threads()`
+marks one-dimensional spilled compute programs and `run(counted)` inserts an
+entry guard so lanes past the count leave before any wave op or store. Needed
+a `Translated.threads` field in this tree (extracted from `StageIo::Cs`'s
+`ComputeIo.threads`; the field was absent, unlike avatarmanz). Build clean,
+unit tests 214 passed (same 4 pre-existing failures).
+
+Live, `VICTORY_BVH_BUILDER=1` non-quarantined (exe 21:31:48, `td_run.log`):
+builder started (21:36:11, pipelines=53) and **still crashed** at 21:36:16
+(~5 s, exit -1073741819). But the bad-value census changed materially:
+`0x7c007c00` and `0xfc00fc00` (the 16-bit half ±inf sentinel) are now **zero**
+(was x8/x2 in the previous builder run). The new fault values are
+`0xffffffffffffffff` (NONE = 0xffff_ffff read as a 64-bit pointer) x20 and
+32-bit -Inf (`0xff800000`) x6; no missing-page accesses. So the host-side
+group-count conversion removed the half-float empty-node corruption — a real
+step — but a NONE child pointer is still followed by the title's traversal.
+
+**Open gap identified.** `counted_in_threads()` keeps avatarmanz's condition
+`(!native.wave64 || host_max_wave() >= 64)`. Builder programs carry the
+console's wave64 metadata bit, and this host has 32 lanes, so that condition
+is false and the entry guard (tail-lane early-out) is **not emitted** for
+them — even though this tree translates all 53 to wave32 (the `supported()`
+gate would otherwise reject them). avatarmanz's condition assumes a wave64
+program stays two host half-waves that must exchange, but here value_uniform
+already made them exact wave32. The draw-side group conversion is active
+(hence the sentinel disappeared) while the shader-side tail-lane guard is
+not; that mismatch is the leading suspect for the surviving NONE pointer.
+Next: evaluate relaxing that condition for wave32-translated builder programs
+(and verify no wrong-shader regression) before touching node-bounds lore.

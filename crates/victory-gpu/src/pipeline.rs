@@ -136,6 +136,9 @@ fn shader(stage: &'static str, bytes: &[u8]) -> Arc<Shader> {
 #[cfg(windows)]
 pub(crate) struct Translated {
     pub(crate) host: victory_shader::emit::HostShader,
+    /// The compute program's thread-group size, for dispatches counted in
+    /// threads (the console's `DispatchX` flag 0x20).
+    pub(crate) threads: Option<[u32; 3]>,
     pub(crate) used: Vec<victory_shader::UsedResource>,
     /// Whether the shader's code can store to buffer memory ([`stores`]);
     /// true when its code is not known.
@@ -202,18 +205,20 @@ fn translate(container: &[u8]) -> Result<Translated, String> {
     let host = crate::shader_cache::host_shader(container)?;
     let stores = programs.is_empty() || programs.iter().any(stores);
     let address_stores = programs.is_empty() || programs.iter().any(stores_by_address);
-    let used = programs
-        .into_iter()
-        .find(|p| {
-            matches!(
-                p.stage,
-                HwStage::Vs | HwStage::Ps | HwStage::Ms | HwStage::Cs
-            )
-        })
-        .map(|p| p.used)
-        .unwrap_or_default();
+    let main = programs.into_iter().find(|p| {
+        matches!(
+            p.stage,
+            HwStage::Vs | HwStage::Ps | HwStage::Ms | HwStage::Cs
+        )
+    });
+    let threads = main.as_ref().and_then(|p| match &p.io {
+        victory_shader::native::StageIo::Cs(cs) => Some(cs.threads),
+        _ => None,
+    });
+    let used = main.map(|p| p.used).unwrap_or_default();
     Ok(Translated {
         host,
+        threads,
         used,
         stores,
         address_stores,
