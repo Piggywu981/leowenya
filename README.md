@@ -93,6 +93,19 @@ the per-record clamp) helps only at full draw counts, and `INPLACE` (which
 cuts a host-side read) is not the bottleneck here. The next target is the
 GPU time itself; a per-pipeline GPU timing pass is the next diagnostic.
 
+A later A/B with `VICTORY_TEXTURE_NO_WAIT=1` and in-flight fetch off raised
+the world's steady frames to **1.0-3.7 fps (0.27-1.0 s/frame)** — about
+3-5x — and cut `textures` from 28-206 ms to 27-73 ms and `copying back` from
+317-393 ms to 12-177 ms. `on the GPU` fell to 1-169 ms, exposing `heap
+buffers` (the view-heap buffer pass, including texture uploads) at 357-1231 ms
+as the new largest bucket. `VICTORY_TEXTURE_NO_WAIT=1` is now on by default
+(`-NoTextureNoWait` for comparison); in-flight fetch stays as before. A
+per-pipeline GPU timing run showed our own pass timings (~10 ms/frame) do not
+name the title's draws, so the `heap buffers` bucket still needs another
+instrument. The leading public fork (avatarmanz, 16 fps) is on AMD RDNA3
+with native wave64; our NVIDIA 32-lane card emulates the refused programs,
+which is a structural gap no switch closes.
+
 ### Indirect light now follows the sky (ported from belobug `4f62c2a`)
 
 The fixed ambient level was the cause of the overexposed picture: the same

@@ -8,12 +8,14 @@
 #   powershell -ExecutionPolicy Bypass -File run.ps1 -NoTune     # A/B: only ambient, no perf switches
 #   powershell -ExecutionPolicy Bypass -File run.ps1 -Window      # A/B: clamp indirect draws in windows
 #   powershell -ExecutionPolicy Bypass -File run.ps1 -Window -Gather  # A/B: also gather scattered records (needs -Window)
+#   powershell -ExecutionPolicy Bypass -File run.ps1 -NoTextureNoWait  # A/B: texture refresh waits for the title's remap
 param(
   [switch]$Guide,
   [switch]$NoAmbient,
   [switch]$NoTune,
   [switch]$NoMipSkip,
   [switch]$NoFetchInflight,
+  [switch]$NoTextureNoWait,
   [switch]$Window,
   [switch]$Gather,
   [string]$Game = 'G:\Leonida\GTA6.Xbox.v1.0.2.1-CYBERLEEK\game_scarlett_master.exe',
@@ -50,6 +52,14 @@ if (-not $NoTune) {
   $env:VICTORY_CARD_REHASH_RUNS = '1'
   $env:VICTORY_JOIN_COPIES      = '1'   # one kernel step for adjacent copies
   $env:VICTORY_WIDE_REFRESH     = '1'   # refresh copies on a thread
+  # Texture refreshes must not wait for the title to hold its memory still:
+  # measured here textures 28-206 ms -> 27-73 ms, and endevslab's A/B found
+  # the lock wait was 964 ms of a 2780 ms frame. -NoTextureNoWait restores it.
+  if ($NoTextureNoWait) {
+    $env:VICTORY_TEXTURE_NO_WAIT = '0'
+  } else {
+    $env:VICTORY_TEXTURE_NO_WAIT = '1'
+  }
   # VICTORY_WIDE_TEXTURES=1 is available but off: A/B on this 8 GB card showed
   # no clear gain (CCS03's gain was on a 3090 Ti where textures can reside).
   # mip-skip is on by default on small cards: drop the two most detailed mips
@@ -89,7 +99,8 @@ if (-not $NoTune) {
                 'VICTORY_WIDE_BACK','VICTORY_CARD_REHASH_RUNS','VICTORY_JOIN_COPIES',
                 'VICTORY_WIDE_REFRESH','VICTORY_WIDE_TEXTURES',
                 'VICTORY_TEXTURE_MIP_SKIP','VICTORY_TEXTURE_MIP_SKIP_MIN',
-                'VICTORY_CARD_FETCH_INFLIGHT','VICTORY_INDIRECT_WINDOW','VICTORY_INDIRECT_GATHER') {
+                'VICTORY_CARD_FETCH_INFLIGHT','VICTORY_INDIRECT_WINDOW','VICTORY_INDIRECT_GATHER',
+                'VICTORY_TEXTURE_NO_WAIT') {
     Remove-Item "Env:$v" -ErrorAction SilentlyContinue
   }
 }
@@ -107,7 +118,8 @@ $log = Join-Path $root 'run.log'
 $winOn = ($Window -or $Gather) -and -not $NoTune
 $fetchOn = -not $NoTune -and -not $NoFetchInflight -and -not $winOn
 $gatherOn = $Gather -and -not $NoTune
-Write-Host "Launching $exe with AMBIENT=$(if($NoAmbient){'off'}else{'0.6'}), TUNE=$(-not $NoTune), WINDOW=$winOn, GATHER=$gatherOn, FETCH=$fetchOn, GUIDE=$Guide"
+$noWaitOn = -not $NoTune -and -not $NoTextureNoWait
+Write-Host "Launching $exe with AMBIENT=$(if($NoAmbient){'off'}else{'0.6'}), TUNE=$(-not $NoTune), WINDOW=$winOn, GATHER=$gatherOn, FETCH=$fetchOn, NOWAIT=$noWaitOn, GUIDE=$Guide"
 Write-Host "Log: $log"
 & $exe run $Game --unimplemented zero --execute 2>&1 | Tee-Object -FilePath $log
 Write-Host "Exited with $LASTEXITCODE"
