@@ -82,3 +82,27 @@ lowering: done. The three remaining refusals: **archived as hardware/ISA-structu
 limits**, not fixable by any available fork's small switch. Further work would need
 new lowering capability (multi-wave-group cross-wave exchange + dynamic mask proof)
 that no public tree implements.
+
+## Correction (2026-11-27): the frame-time attribution was wrong
+
+An earlier conclusion called the world frame "GPU-bound = the structural cost of
+wave64 emulation on a 32-lane card, no switch closes it". That was **premature and is
+withdrawn**. Reading `host.rs` shows the frame line's `{gpu:.1} on the GPU` is
+`SUBMISSION_US[1]` (`host.rs:6673-6675`), i.e. the **wall-clock from submission to the
+fence completing** (`prepared.elapsed()` at `:4863`, `waiting.elapsed()` at `:4549`),
+NOT pure GPU compute time. The live log `run-merged-acceptance.log` reports, in the
+same frame: `card about 92-95% busy`, `nothing of ours queued 117 ms`, and `1477 ms
+waiting for the card in settles`. So the card is busy but *not with our queued draw
+work* — the 1477 ms is memory copies / synchronization occupying the card, which is
+the opposite of an unavoidable wave64 compute wall. kelvaroq
+(`stellarr-studio/kelvaroq`, = local `fablinoo__kelvaroq`, HEAD `1270c42`) makes the
+same claim with its "unified memory layer": the copy loop, not the game's draw work,
+eats the frame.
+
+**New direction (NVIDIA only — no hardware change):** attribute the 1477 ms properly
+with copystat/GPU timestamps (measure before editing), then port N-card-applicable
+copy/VRAM/submission fixes — kelvaroq patches 0038 (constants read from the GPU copy),
+0039 (ReBAR: read-only copies in CPU-visible VRAM), 0040 (async submit defaults) as
+references — evaluating each against this merged main tree. Success = stable world
+frame time drops materially, with `notTranslated` not regressing, no TDR, tests clean.
+
